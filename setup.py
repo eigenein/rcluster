@@ -9,7 +9,10 @@ setuptools.setup(
     name="rcluster",
     version="0.0.1",
     # Package directories.
-    packages=["rcluster", "rcluster.tests"],
+    packages=[
+        "rcluster",
+        "rcluster.tests"
+    ],
     # Dependencies.
     install_requires=["redis>=2.7.2"],
     # Enable "setup.py test".
