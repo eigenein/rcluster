@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from setuptools import find_packages, setup
+import setuptools
 
 
-setup(
+setuptools.setup(
     # Name and version.
     name="rcluster",
     version="0.0.1",
     # Package directories.
     package_dir={"": "src"},
-    packages=find_packages("src"),
+    packages=setuptools.find_packages("src"),
     # Dependencies.
     install_requires=["redis>=2.7.2"],
     # Package index metadata.
