@@ -13,6 +13,8 @@ setuptools.setup(
     packages=setuptools.find_packages("src"),
     # Dependencies.
     install_requires=["redis>=2.7.2"],
+    # Enable "setup.py test".
+    test_suite="rcluster.tests",
     # Package index metadata.
     author="Pavel Perestoronin",
     author_email="eigenein@gmail.com",
