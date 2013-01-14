@@ -5,10 +5,15 @@ from setuptools import find_packages, setup
 
 
 setup(
+    # Name and version.
     name="rcluster",
     version="0.0.1",
-    packages=find_packages(),
+    # Package directories.
+    package_dir={"": "src"},
+    packages=find_packages("src"),
+    # Dependencies.
     install_requires=["redis>=2.7.2"],
+    # Package index metadata.
     author="Pavel Perestoronin",
     author_email="eigenein@gmail.com",
     description="Client-side Redis sharding",
