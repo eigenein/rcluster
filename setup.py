@@ -11,7 +11,8 @@ setuptools.setup(
     # Package directories.
     packages=[
         "rcluster",
-        "rcluster.tests"
+        "rcluster.enums",
+        "rcluster.tests",
     ],
     # Dependencies.
     install_requires=["redis>=2.7.2"],
