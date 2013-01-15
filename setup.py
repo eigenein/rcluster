@@ -23,6 +23,7 @@ setuptools.setup(
     maintainer="Pavel Perestoronin",
     maintainer_email="eigenein@gmail.com",
     description="Client-side Redis sharding",
+    long_description=open("README.markdown", "rt").read(),
     license="Apache License, Version 2.0",
     keywords=["cluster", "redis", "sharding"],
     url="https://github.com/eigenein/rcluster",
