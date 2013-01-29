@@ -1,0 +1,6 @@
+redis>=2.7.2
+tornado>=2.4.1
+-e git://github.com/eigenein/python-daemon-1.5.5-py3k.git#egg=python-daemon-1.5.5-py3k
+# The following packages are required for development only.
+pep8>=1.4.1
+-e hg+https://bitbucket.org/icordasc/flakey#egg=flakey
