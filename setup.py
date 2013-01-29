@@ -11,13 +11,19 @@ setuptools.setup(
     # Package directories.
     packages=[
         "rcluster",
-        "rcluster.enums",
         "rcluster.tests",
     ],
+    # Other files.
+    package_data={
+    },
     # Dependencies.
-    install_requires=["redis>=2.7.2"],
+    install_requires=[
+        "redis>=2.7.2"
+    ],
     # Enable "setup.py test".
     test_suite="rcluster.tests",
+    # Allow archiving.
+    zip_safe=True,
     # Package index metadata.
     author="Pavel Perestoronin",
     author_email="eigenein@gmail.com",
