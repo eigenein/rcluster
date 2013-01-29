@@ -24,10 +24,25 @@ if __name__ == "__main__":
     cluster_state = rcluster.proxy.shared.ClusterState()
     node_state = rcluster.proxy.shared.ClusterNodeState()
 
+    logger.info("Starting a cluster node ...")
     node = rcluster.proxy.ClusterNode(cluster_state, node_state)
     node.start()
+    logger.info(
+        "Cluster node is started on port %s (DB #%s).",
+        node.port_number,
+        node.db_number,
+    )
+
+    logger.info("Starting a cluster node interface ...")
     interface = rcluster.proxy.Interface(cluster_state, node_state)
     interface.start()
+    logger.info(
+        "Cluster node interface is started on port %s.",
+        interface.port_number,
+    )
 
-    logger.info("Cluster Proxy is being started.")
-    tornado.ioloop.IOLoop.start()
+    logger.info("I/O loop is being started.")
+    try:
+        tornado.ioloop.IOLoop.instance().start()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt.")

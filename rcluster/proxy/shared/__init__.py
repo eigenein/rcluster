@@ -5,7 +5,7 @@
 Contains shared classes for Redis Cluster Proxy.
 """
 
-import datetime
+import rcluster.utilities
 
 
 class ClusterNodeState:
@@ -22,4 +22,4 @@ class ClusterState:
     """
 
     def __init__(self):
-        self._time_stamp = 
+        self._time_stamp = rcluster.utilities.Timestamp.get()
