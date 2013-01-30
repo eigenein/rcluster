@@ -37,6 +37,22 @@ def parse_args():
         default="DEBUG",
         help="logging level (default: %(default)s)",
     )
+    parser.add_argument(
+        "--node-port",
+        metavar="NODE_PORT",
+        type=int,
+        dest="node_port_number",
+        default=6380,
+        help="node port number (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--interface-port",
+        metavar="INTERFACE_PORT",
+        type=int,
+        dest="interface_port_number",
+        default=6381,
+        help="interface port number (default: %(default)s)",
+    )
 
     return parser.parse_args()
 
@@ -51,7 +67,10 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
 
     logger.info("Starting a cluster node ...")
-    node = rcluster.proxy.ClusterNode(db_number=args.db_number)
+    node = rcluster.proxy.ClusterNode(
+        db_number=args.db_number,
+        port_number=args.node_port_number,
+    )
     node.start()
     logger.info(
         "Cluster node %s is started on port %s (DB #%s).",
@@ -61,7 +80,10 @@ if __name__ == "__main__":
     )
 
     logger.info("Starting a cluster node interface ...")
-    interface = rcluster.proxy.Interface(node)
+    interface = rcluster.proxy.Interface(
+        node=node,
+        port_number=args.interface_port_number,
+    )
     interface.start()
     logger.info(
         "Cluster node interface is started on port %s.",

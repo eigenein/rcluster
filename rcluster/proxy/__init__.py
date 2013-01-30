@@ -29,9 +29,6 @@ class ClusterNode(tornado.web.Application):
     # The logger instance.
     _logger = logging.getLogger("ClusterNode")
 
-    # Tornado web application.
-    _application = None
-
     # Redis connection.
     _redis = None
 
@@ -118,18 +115,20 @@ class ClusterNode(tornado.web.Application):
         )
 
 
-class Interface:
+class Interface(tornado.netutil.TCPServer):
     """
     The cluster node external interface. Maintains communications with clients.
     """
 
-    _server = None
+    _logger = logging.getLogger("Interface")
 
     def __init__(
         self,
         node,
         port_number=6381,
     ):
+        super(Interface, self).__init__()
+
         self._node = node
         self._port_number = port_number
 
@@ -138,5 +137,45 @@ class Interface:
         return self._port_number
 
     def start(self):
-        self._server = tornado.netutil.TCPServer()
-        self._server.listen(self._port_number)
+        self.listen(self._port_number)
+
+    def handle_stream(self, stream, address):
+        self._logger.info("Accepted connection from %s.", address)
+        _InterfaceClientConnection(self._node, stream).serve_request()
+
+
+class _InterfaceClientConnection:
+    """
+    Serves the interface client connection.
+    """
+
+    _logger = logging.getLogger("_InterfaceClientConnection")
+
+    def __init__(self, node, stream):
+        self._node = node
+        self._stream = stream
+
+    def serve_request(self):
+        self._stream.read_until(b"\r\n", callback=self._read_argument_count)
+
+    def _read_argument_count(self, bytes):
+        try:
+            line = bytes.decode("ascii")
+        except ValueError:
+            self._send_status(False, comment="Length is expected.", close=True)
+        else:
+            if not line or line[0] != "*":
+                self._send_status(False, comment="* is expected.", close=True)
+            else:
+                self.serve_request()
+
+    def _send_status(self, success, status="", comment="", close=False):
+        self._stream.write((
+            "%s%s%s%s\r\n" % (
+                "+" if success else "-",
+                status or ("OK" if success else "ERR"),
+                " " if comment else "",
+                comment,
+            )).encode("ascii"),
+            callback=self.serve_request if not close else self._stream.close,
+        )
