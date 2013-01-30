@@ -5,36 +5,63 @@
 Redis Cluster Proxy startup script.
 """
 
+import argparse
 import logging
 
 import tornado.ioloop
 
 import rcluster.proxy
-import rcluster.proxy.shared
+import rcluster.utilities
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=globals()["__doc__"],
+        formatter_class=argparse.RawTextHelpFormatter,
+        prog="python3 -m rcluster",
+    )
+
+    parser.add_argument(
+        "--db",
+        metavar="DB_NUMBER",
+        type=int,
+        dest="db_number",
+        default=1,
+        help="Redis database number (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--log-level",
+        metavar="LOG_LEVEL",
+        choices=["DEBUG", "INFO", "WARN", "ERROR", ],
+        dest="log_level",
+        default="DEBUG",
+        help="logging level (default: %(default)s)",
+    )
+
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
+    args = parse_args()
+
     logging.basicConfig(
         format="%(asctime)s [%(process)d] %(name)s %(levelname)s: %(message)s",
-        level=logging.INFO,
+        level=getattr(logging, args.log_level),
     )
     logger = logging.getLogger(__name__)
 
-    logger.info("Initializating ...")
-    cluster_state = rcluster.proxy.shared.ClusterState()
-    node_state = rcluster.proxy.shared.ClusterNodeState()
-
     logger.info("Starting a cluster node ...")
-    node = rcluster.proxy.ClusterNode(cluster_state, node_state)
+    node = rcluster.proxy.ClusterNode(db_number=args.db_number)
     node.start()
     logger.info(
-        "Cluster node is started on port %s (DB #%s).",
+        "Cluster node %s is started on port %s (DB #%s).",
+        rcluster.utilities.Converter.hexlify_bytes(node.node_id),
         node.port_number,
         node.db_number,
     )
 
     logger.info("Starting a cluster node interface ...")
-    interface = rcluster.proxy.Interface(cluster_state, node_state)
+    interface = rcluster.proxy.Interface(node)
     interface.start()
     logger.info(
         "Cluster node interface is started on port %s.",

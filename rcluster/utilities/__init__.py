@@ -5,6 +5,7 @@
 Common utility functions and classes.
 """
 
+import binascii
 import datetime
 
 
@@ -19,3 +20,10 @@ class Timestamp:
         """
 
         return datetime.datetime.utcnow() - cls.epoch_start
+
+
+class Converter:
+
+    @classmethod
+    def hexlify_bytes(cls, bytes):
+        return binascii.hexlify(bytes).decode("ascii")
