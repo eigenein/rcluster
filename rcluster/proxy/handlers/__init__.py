@@ -15,11 +15,15 @@ import rcluster.utilities
 
 class PingHandler(tornado.web.RequestHandler):
     def get(self):
-        self.write(json.dumps({
-            "node_id": rcluster.utilities.Converter.hexlify_bytes(
-                self.application.node_id,
-            ),
-        }))
+        self.write(json.dumps(
+            obj={
+                "node_id": rcluster.utilities.Converter.hexlify_bytes(
+                    self.application.node_id,
+                ),
+                "role": self.application.state.role,
+            },
+            indent=2,
+        ))
 
     def set_default_headers(self):
         self.set_header("Content-Type", "application/json")

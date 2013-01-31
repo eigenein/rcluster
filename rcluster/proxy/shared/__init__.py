@@ -6,25 +6,22 @@ Contains shared classes for Redis Cluster Proxy.
 """
 
 
-class ClusterNodeState:
+class State:
     """
-    Stores the cluster node state.
+    Stores the node state.
     """
+
+    # Cluster node roles.
+    NONE, MASTER, SLAVE = range(3)
+
+    _role = NONE
 
     def __init__(self, redis):
         self._redis = redis
 
-    def read(self):
+    def load(self):
         pass
 
-
-class ClusterState:
-    """
-    Stores the whole cluster state.
-    """
-
-    def __init__(self, redis):
-        self._redis = redis
-
-    def read(self):
-        pass
+    @property
+    def role(self):
+        return self._role
