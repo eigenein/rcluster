@@ -256,7 +256,10 @@ class _InterfaceClientRequest:
             )
         else:
             if argument_length > 0:
-                self._stream.read_bytes(argument_length, callback=self._read_argument)
+                self._stream.read_bytes(
+                    argument_length,
+                    callback=self._read_argument,
+                )
             elif argument_length == 0:
                 self._read_argument(bytes(0))
             else:
