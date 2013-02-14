@@ -60,10 +60,18 @@ setuptools.setup(
     # Package directories.
     packages=[
         "rcluster",
+        "rcluster.protocol",
+        "rcluster.protocol.exceptions",
+        "rcluster.protocol.replies",
+        "rcluster.shard",
         "rcluster.tests",
-        "rcluster.client",
-        "rcluster.proxy",
     ],
+    # Entry points.
+    entry_points={
+        "console_scripts": [
+            "rcluster-shard = rcluster.shard:entry_point",
+        ],
+    },
     # Other files.
     package_data={
     },

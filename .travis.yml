@@ -3,7 +3,7 @@ python:
   - "3.2"
 before_install:
   - "pip install -r requirements.txt"
-  - "python setup.py pep8 flakey"
+  - "python setup.py check pep8 flakey"
 install:
   - "python setup.py install"
 script:
