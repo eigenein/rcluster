@@ -116,6 +116,7 @@ def entry_point():
         Shard(args.port_number, master_redis).start()
 
     try:
+        logger.info("Redis master is OK, IO loop is being started.")
         tornado.ioloop.IOLoop.instance().start()
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt.")

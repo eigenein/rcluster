@@ -23,10 +23,12 @@ class CommandHandler:
         self._logger = logging.getLogger("rcluster.protocol.CommandHandler")
         self._handlers = {
             b"PING": self._on_ping,
+            b"ECHO": self._on_echo,
+            b"QUIT": self._on_quit,
         }
 
     def handle(self, command, arguments):
-        self._logger.info("Requesting the %s command.", command)
+        self._logger.debug("%s %s", command, repr(arguments))
 
         handler = self._handlers.get(command.upper())
 
@@ -40,7 +42,26 @@ class CommandHandler:
             return rcluster.protocol.replies.StatusReply(data=b"PONG")
         else:
             raise rcluster.protocol.exceptions.CommandError(
-                data=b"ERR Wrong number of arguments.",
+                data=b"ERR Wrong number of arguments (expected no arguments).",
+            )
+
+    def _on_echo(self, arguments):
+        if len(arguments) == 1:
+            return rcluster.protocol.replies.BulkReply(data=arguments[0])
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Wrong number of arguments (expected 1).",
+            )
+
+    def _on_quit(self, arguments):
+        if not arguments:
+            return rcluster.protocol.replies.StatusReply(
+                data=b"OK Bye!",
+                quit=True,
+            )
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Wrong number of arguments (expected no arguments).",
             )
 
 
@@ -237,13 +258,16 @@ class _RequestHandler:
         else:
             close_stream = False
 
-        self._reply(reply, close_stream)
+        self._logger.debug("%s", repr(reply))
+        self._reply(reply)
 
-    def _reply(self, reply, close_stream=False):
+    def _reply(self, reply):
+        data = rcluster.protocol.replies.ReplyEncoder.encode(reply)
+        self._logger.debug("%s", data)
         self._stream.write(
-            rcluster.protocol.replies.ReplyEncoder.encode(reply),
+            data,
             callback=(
-                self._callback if not close_stream
+                self._callback if not reply.quit
                 else self._stream.close
             ),
         )
