@@ -162,7 +162,6 @@ class _RequestHandler:
                 rcluster.protocol.replies.ErrorReply(
                     data=b"ERR *<number of arguments> CR LF is expected.",
                 ),
-                close_stream=True,
             )
         else:
             if self._argument_count > 0:
@@ -188,7 +187,6 @@ class _RequestHandler:
                         b" CR LF is expected."
                     ),
                 ),
-                close_stream=True,
             )
         else:
             if argument_length > 0:
@@ -243,7 +241,6 @@ class _RequestHandler:
             reply = rcluster.protocol.replies.ErrorReply(
                 data=ex.data,
             )
-            close_stream = ex.close_stream
         except rcluster.protocol.exceptions.UnknownCommandError:
             reply = rcluster.protocol.replies.ErrorReply(
                 data=b"ERR Unknown command: " + command,
