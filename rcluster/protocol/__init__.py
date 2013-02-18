@@ -248,15 +248,11 @@ class _RequestHandler:
             reply = rcluster.protocol.replies.ErrorReply(
                 data=b"ERR Unknown command: " + command,
             )
-            close_stream = True
         except:
             self._logger.error(traceback.format_exc())
             reply = rcluster.protocol.replies.ErrorReply(
                 data=b"ERR Internal server error.",
             )
-            close_stream = True
-        else:
-            close_stream = False
 
         self._logger.debug("%s", repr(reply))
         self._reply(reply)
