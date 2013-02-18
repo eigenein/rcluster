@@ -5,7 +5,10 @@
 Redis Cluster Shard.
 """
 
+import argparse
 import logging
+import os
+import traceback
 
 import tornado.ioloop
 
@@ -30,19 +33,48 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         self._shard = shard
 
 
-# TODO: parse options.
-# TODO: setup logging level.
-# TODO: setup port.
-# TODO: and etc.
+def _create_argument_parser():
+    parser = argparse.ArgumentParser(
+        description=globals()["__doc__"],
+        formatter_class=argparse.RawTextHelpFormatter,
+        prog="rcluster-shard",
+    )
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        type=str,
+        metavar="LEVEL",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "FATAL"],
+        default="DEBUG",
+        help="logging level (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--port",
+        dest="port_number",
+        type=int,
+        metavar="PORT",
+        default=6380,
+        help="port number to listen to (default: %(default)s)",
+    )
+    return parser
+
+
 def entry_point():
+    args = _create_argument_parser().parse_args()
+
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=getattr(logging, args.log_level),
         format="%(asctime)s [%(process)d] %(name)s %(levelname)s: %(message)s",
     )
 
-    Shard(6380).start()
+    Shard(args.port_number).start()
 
     try:
         tornado.ioloop.IOLoop.instance().start()
     except KeyboardInterrupt:
-        pass
+        logging.info("Keyboard interrupt.")
+    except:
+        logging.fatal(traceback.format_exc())
+        return os.EX_SOFTWARE
+
+    return 0
