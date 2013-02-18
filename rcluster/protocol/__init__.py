@@ -137,7 +137,8 @@ class _RequestHandler:
                 raise ValueError()
             self._argument_count = int(data[1:].rstrip())
         except ValueError:
-            self._reply(rcluster.protocol.replies.ErrorReply(
+            self._reply(
+                rcluster.protocol.replies.ErrorReply(
                     data=b"ERR *<number of arguments> CR LF is expected.",
                 ),
                 close_stream=True,
@@ -159,8 +160,12 @@ class _RequestHandler:
                 raise ValueError()
             argument_length = int(data[1:].rstrip())
         except ValueError:
-            self._reply(rcluster.protocol.replies.ErrorReply(
-                    data=b"ERR $<number of bytes of argument> CR LF is expected.",
+            self._reply(
+                rcluster.protocol.replies.ErrorReply(
+                    data=(
+                        b"ERR $<number of bytes of argument>"
+                        b" CR LF is expected."
+                    ),
                 ),
                 close_stream=True,
             )
