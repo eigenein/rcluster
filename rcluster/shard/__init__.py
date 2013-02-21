@@ -83,6 +83,21 @@ class _ClusterState:
         """
 
         self._redis = redis
+        # Cached global cluster state.
+        self._state = None
+
+    def initialize(self):
+        """
+        Initializes the cluster state.
+        """
+
+        try:
+            # TODO: Read all the state within one transaction.
+            self._state = self._redis.get(self.CLUSTER_STATE_KEY) or self.EMPTY
+        except Exception as ex:
+            raise rcluster.shard.exceptions.ClusterStateOperationError(
+                "Failed to get the global cluster state.",
+            ) from ex
 
     @property
     def state(self):
@@ -90,31 +105,7 @@ class _ClusterState:
         Gets the global cluster state.
         """
 
-        try:
-            return self._redis.get(self.CLUSTER_STATE_KEY) or self.EMPTY
-        except Exception as ex:
-            raise rcluster.shard.exceptions.ClusterStateOperationError(
-                "Failed to get the global cluster state.",
-            ) from ex
-
-    @state.setter
-    def state(self, new_state):
-        """
-        Sets the global cluster state.
-        """
-
-        try:
-            with self._redis.pipeline() as pipeline:
-                pipeline.set(self.CLUSTER_STATE_KEY, new_state)
-                pipeline.set(
-                    self.CLUSTER_STATE_TIMESTAMP_KEY,
-                    self._timestamp(),
-                )
-                pipeline.execute()
-        except Exception as ex:
-            raise rcluster.shard.exceptions.ClusterStateOperationError(
-                "Failed to set the global cluster state.",
-            ) from ex
+        return self._state
 
     def _timestamp(self):
         return int(time.time())
@@ -244,13 +235,21 @@ def entry_point():
         logger.fatal("Redis master instance is not available.")
         return os.EX_UNAVAILABLE
     else:
-        Shard(args.port_number, _ClusterState(master_redis)).start()
+        logger.info("Redis master instance is OK.")
+
+    logger.info("Initializing the cluster state ...")
+    cluster_state = _ClusterState(master_redis)
+    cluster_state.initialize()
+
+    logger.info("Done. Starting the shard ...")
+    Shard(args.port_number, cluster_state).start()
+
+    logger.info("IO loop is being started.")
+    logger.info(
+        "Will be accepting connections on port %s." % args.port_number,
+    )
 
     try:
-        logger.info("Redis master is OK, IO loop is being started.")
-        logger.info(
-            "Will be accepting connections on port %s." % args.port_number,
-        )
         tornado.ioloop.IOLoop.instance().start()
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt.")
