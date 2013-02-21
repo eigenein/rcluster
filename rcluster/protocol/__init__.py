@@ -47,9 +47,19 @@ class CommandHandler:
 
         return {
             b"Server": {
-                b"commands:": b",".join(self._handlers.keys()),
+                b"commands": b",".join(self._handlers.keys()),
             },
         }
+
+    def _serialize_info_section(self, section_name, section):
+        """
+        Serializes the info section into an iterable of byte strings.
+        """
+
+        return itertools.chain(
+            (b"# " + section_name, ),
+            (name + b":" + value for name, value in section.items()),
+        )
 
     def _on_ping(self, arguments):
         if not arguments:
@@ -68,18 +78,27 @@ class CommandHandler:
             )
 
     def _on_info(self, arguments):
-        if not arguments:
-            info = self._get_info()
-            if not info:
-                raise ValueError("Info should not be None or empty.")
-            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
-                itertools.chain(
-                ),
-            ))
-        else:
+        if len(arguments) > 1:
             raise rcluster.protocol.exceptions.CommandError(
-                data=b"ERR Expected> INFO",
+                data=b"ERR Expected> INFO [section]",
             )
+        info = self._get_info()
+        if not info:
+            raise ValueError("Info should not be None or empty.")
+        # Check whether a specific section is requested.
+        if not arguments:
+            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
+                itertools.chain(*(
+                    self._serialize_info_section(section_name, section)
+                    for section_name, section in info.items()
+                )),
+            ) + b"\r\n")
+        else:
+            section_name = arguments[0]
+            section = info.get(section_name, {})
+            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
+                self._serialize_info_section(section_name, section),
+            ) + b"\r\n")
 
     def _on_quit(self, arguments):
         if not arguments:
