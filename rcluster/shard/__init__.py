@@ -124,4 +124,4 @@ def entry_point():
         logger.fatal(traceback.format_exc())
         return os.EX_SOFTWARE
 
-    return 0
+    return os.EX_OK
