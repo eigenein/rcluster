@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import traceback
+import uuid
 
 import redis
 import redis.exceptions
@@ -38,8 +39,27 @@ class Shard(rcluster.protocol.Server):
         return self._cluster_state.state
 
     def add_shard(self, host, port_number=rcluster.shared.DEFAULT_REDIS_PORT):
-        # TODO.
-        return self._cluster_state.state
+        try:
+            shard_id = uuid.uuid4()
+            connection = redis.StrictRedis(host, port_number)
+            # Obtain the shard ID.
+            if not connection.setnx(
+                rcluster.shared.SHARD_ID_KEY,
+                shard_id,
+            ):
+                shard_id = connection.get(rcluster.shared.SHARD_ID_KEY)
+        except redis.exceptions.ConnectionError as ex:
+            raise rcluster.exceptions.ShardIsNotAvailable()
+        else:
+            self._cluster_state.add_shard(
+                shard_id,
+                host,
+                port_number,
+                _ClusterState.SHARD_OK,
+            )
+            # TODO: refresh_state.
+            # TODO: do_balancing.
+            return self._cluster_state.state
 
     def _create_handler(self):
         return _ShardCommandHandler(self)
@@ -61,6 +81,13 @@ class _ClusterState:
     ## The cluster is OK.
     OK = 3
 
+    # Shard states.
+
+    ## The shard is OK.
+    SHARD_OK = 0
+    ## The shard is unavailable or failing.
+    SHARD_UNAVAILABLE = 1
+
     # Key templates.
 
     ## Global cluster state.
@@ -76,6 +103,7 @@ class _ClusterState:
     ## Keys to locate the shard Redis instance.
     SHARD_HOST_KEY_TEMPLATE = SHARD_ENTRY_TEMPLATE % "%s:host"
     SHARD_PORT_KEY_TEMPLATE = SHARD_ENTRY_TEMPLATE % "%s:port"
+    SHARD_STATE_KEY_TEMPLATE = SHARD_ENTRY_TEMPLATE % "%s:state"
 
     def __init__(self, redis):
         """
@@ -93,23 +121,65 @@ class _ClusterState:
         """
 
         try:
-            with self._redis.pipeline(transaction=False) as pipeline:
-                pipeline.get(self.CLUSTER_STATE_KEY)
-                # Merge obtained values with the default ones.
-                (self._state, ) = itertools.starmap(
-                    lambda value, default_value: (
-                        value if value is not None else default_value
+            self._state = self._redis.get(
+                _ClusterState.CLUSTER_STATE_KEY,
+            ) or _ClusterState.EMPTY
+            shard_ids = self._redis.smembers(
+                _ClusterState.SHARD_IDS_KEY,
+            ) or []
+
+            self._shards = {}
+            for shard_id in shard_ids:
+                self._shards[shard_id] = {
+                    "host": self._redis.get(
+                        _ClusterState.SHARD_HOST_KEY_TEMPLATE % shard_id,
                     ),
-                    zip(
-                        pipeline.execute(), [
-                            _ClusterState.EMPTY,
-                        ],
+                    "port": self._redis.get(
+                        _ClusterState.SHARD_PORT_KEY_TEMPLATE % shard_id,
                     ),
-                )
+                    "state": self._redis.get(
+                        _ClusterState.SHARD_STATE_KEY_TEMPLATE % shard_id,
+                    ),
+                }
         except Exception as ex:
             raise rcluster.shard.exceptions.ClusterStateOperationError(
-                "Failed to get the global cluster state.",
+                "Failed to get the cluster state.",
             ) from ex
+
+    def add_shard(self, shard_id, host, port, state):
+        """
+        Adds the shard to the cluster state or updates the shard information.
+        """
+
+        try:
+            with self._redis.pipeline(transaction=False) as pipeline:
+                pipeline.set(
+                    _ClusterState.SHARD_HOST_KEY_TEMPLATE % shard_id,
+                    host,
+                )
+                pipeline.set(
+                    _ClusterState.SHARD_PORT_KEY_TEMPLATE % shard_id,
+                    port,
+                )
+                pipeline.set(
+                    _ClusterState.SHARD_STATE_KEY_TEMPLATE % shard_id,
+                    state,
+                )
+                pipeline.set(
+                    _ClusterState.CLUSTER_STATE_TIMESTAMP_KEY,
+                    self._timestamp(),
+                )
+                pipeline.execute()
+        except Exception as ex:
+            raise rcluster.shard.exceptions.ClusterStateOperationError(
+                "Failed to add the shard.",
+            ) from ex
+        else:
+            self._shards[shard_id] = {
+                "host": host,
+                "port": port,
+                "state": state,
+            }
 
     @property
     def state(self):

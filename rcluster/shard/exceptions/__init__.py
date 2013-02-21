@@ -8,3 +8,11 @@ class ClusterStateOperationError(Exception):
     """
 
     pass
+
+
+class ShardIsNotAvailable(Exception):
+    """
+    The shard is not available or failed.
+    """
+
+    pass

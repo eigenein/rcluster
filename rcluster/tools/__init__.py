@@ -88,9 +88,11 @@ def shard_set_id():
             logger.info("The shard ID is successfully updated.")
         else:
             if not connection.setnx(shard_id_key, shard_id):
+                shard_id = connection.get(shard_id_key)
                 logger.error(
-                    "The shard ID already exists."
-                    " Use --force to forcibly set it."
+                    "The shard ID already exists: %s"
+                    " Use --force to forcibly set it.",
+                    shard_id,
                 )
             else:
                 logger.info("The shard ID is successfully set.")
