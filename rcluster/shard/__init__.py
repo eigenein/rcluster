@@ -6,7 +6,6 @@ Redis Cluster Shard.
 """
 
 import argparse
-import itertools
 import logging
 import os
 import time
@@ -46,6 +45,12 @@ class Shard(rcluster.protocol.Server):
     def shards(self):
         return dict(self._cluster_state.shards)
 
+    def start(self):
+        super().start()
+        # Initial balancing.
+        self._refresh_state()
+        self._do_balancing()
+
     def add_shard(self, host, port_number=rcluster.shared.DEFAULT_REDIS_PORT):
         try:
             shard_id = uuid.uuid4()
@@ -57,7 +62,7 @@ class Shard(rcluster.protocol.Server):
             ):
                 shard_id = connection.get(rcluster.shared.SHARD_ID_KEY)
         except redis.exceptions.ConnectionError as ex:
-            raise rcluster.exceptions.ShardIsNotAvailable()
+            raise rcluster.exceptions.ShardIsNotAvailable() from ex
         else:
             self._cluster_state.add_shard(
                 shard_id,
@@ -65,8 +70,11 @@ class Shard(rcluster.protocol.Server):
                 port_number,
                 _ClusterState.SHARD_OK,
             )
+            # Refresh state.
             self._refresh_state()
-            # TODO: do_balancing.
+            # And re-balance.
+            self._do_balancing()
+            # Finally, return the new state.
             return self._cluster_state.state
 
     def _create_handler(self):
@@ -79,6 +87,24 @@ class Shard(rcluster.protocol.Server):
             self._cluster_state.state = _ClusterState.EMPTY
             return
 
+        # Collect unavailable slots.
+        unavailable_slots = {
+            slot for slot in self._cluster_state.slots
+            # If there is no any available shard with this slot.
+            if not any(
+                self._shards[shard_id]["state"] == _ClusterState.SHARD_OK
+                for shard_id in slot["shards"]
+                if shard_id in self._shards
+            )
+        }
+        # Check for unavailable slots.
+        if unavailable_slots:
+            self._cluster_state.state = _ClusterState.PARTIAL
+        else:
+            self._cluster_state.state = _ClusterState.OK
+
+    def _do_balancing(self):
+        # TODO.
         pass
 
 
@@ -127,13 +153,17 @@ class _ClusterState:
         (typically, the master one).
         """
 
+        self._logger = logging.getLogger("rcluster.shard._ClusterState")
+
         self._redis = redis
         # Cached global cluster state.
         self._state = None
-        # Replicaness value.
+        # Cached replicaness value.
         self._replicaness = 1
         # Cached shards information.
         self._shards = {}
+        # Cached slots information.
+        self._slots = {}
 
     @property
     def state(self):
@@ -155,6 +185,7 @@ class _ClusterState:
             ) from ex
         else:
             self._state = value
+            self._logger.info("Cluster state changed to %s.", repr(value))
             return value
 
     @property
@@ -169,18 +200,26 @@ class _ClusterState:
 
         return self._shards
 
+    @property
+    def slots(self):
+        return self._slots
+
     def initialize(self):
         """
         Initializes the cluster state.
         """
 
         try:
-            self._state = self._redis.get(
+            self._state = int(self._redis.get(
                 _ClusterState.CLUSTER_STATE_KEY,
-            ) or _ClusterState.EMPTY
-            self._replicaness = self._redis.get(
+            ) or _ClusterState.EMPTY)
+            self._logger.info(
+                "Initial cluster state is %s.",
+                repr(self._state),
+            )
+            self._replicaness = int(self._redis.get(
                 _ClusterState.CLUSTER_REPLICANESS_KEY,
-            ) or 1
+            ) or 1)
             shard_ids = self._redis.smembers(
                 _ClusterState.SHARD_IDS_KEY,
             ) or []
@@ -191,19 +230,19 @@ class _ClusterState:
                     "host": self._redis.get(
                         _ClusterState.SHARD_HOST_KEY_TEMPLATE % shard_id_str,
                     ),
-                    "port": self._redis.get(
+                    "port": int(self._redis.get(
                         _ClusterState.SHARD_PORT_KEY_TEMPLATE % shard_id_str,
-                    ),
-                    "state": self._redis.get(
+                    )),
+                    "state": int(self._redis.get(
                         _ClusterState.SHARD_STATE_KEY_TEMPLATE % shard_id_str,
-                    ),
+                    )),
                 }
         except Exception as ex:
             raise rcluster.shard.exceptions.ClusterStateOperationError(
                 "Failed to get the cluster state.",
             ) from ex
 
-    def add_shard(self, shard_id, host, port, state):
+    def add_shard(self, shard_id, host, port_number, state):
         """
         Adds the shard to the cluster state or updates the shard information.
         """
@@ -223,7 +262,7 @@ class _ClusterState:
                 )
                 pipeline.set(
                     _ClusterState.SHARD_PORT_KEY_TEMPLATE % shard_id_str,
-                    port,
+                    port_number,
                 )
                 pipeline.set(
                     _ClusterState.SHARD_STATE_KEY_TEMPLATE % shard_id_str,
@@ -245,7 +284,7 @@ class _ClusterState:
         else:
             self._shards[shard_id] = {
                 "host": host,
-                "port": port,
+                "port_number": port_number,
                 "state": state,
             }
 
@@ -271,7 +310,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
             b"Shards": {
                 shard_id: (
                     shard["host"] + b" " +
-                    bytes(str(shard["port"]), "ascii") + b" " +
+                    bytes(str(shard["port_number"]), "ascii") + b" " +
                     bytes(str(shard["state"]), "ascii")
                 ) for shard_id, shard in self._shard.shards.items()
             },

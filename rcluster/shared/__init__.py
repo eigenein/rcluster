@@ -15,3 +15,4 @@ DEFAULT_SHARD_PORT = 6380
 
 # The mask to convert a hash into the slot number.
 HASH_MASK = 0xFFF
+SLOT_COUNT = 4096
