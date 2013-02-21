@@ -19,13 +19,15 @@ class CommandHandler:
     Base command handler.
     """
 
-    def __init__(self):
+    def __init__(self, handlers={}):
         self._logger = logging.getLogger("rcluster.protocol.CommandHandler")
         self._handlers = {
             b"PING": self._on_ping,
             b"ECHO": self._on_echo,
             b"QUIT": self._on_quit,
+            b"INFO": self._on_info,
         }
+        self._handlers.update(handlers)
 
     def handle(self, command, arguments):
         self._logger.debug("%s %s", command, repr(arguments))
@@ -37,12 +39,23 @@ class CommandHandler:
         else:
             raise rcluster.protocol.exceptions.UnknownCommandError()
 
+    def _get_info(self):
+        """
+        Gets the server state information.
+        """
+
+        return [
+            b"# Server",
+            b"commands:" + b",".join(self._handlers.keys()),
+            b"",
+        ]
+
     def _on_ping(self, arguments):
         if not arguments:
             return rcluster.protocol.replies.StatusReply(data=b"PONG")
         else:
             raise rcluster.protocol.exceptions.CommandError(
-                data=b"ERR Wrong number of arguments (expected no arguments).",
+                data=b"ERR Expected> PING",
             )
 
     def _on_echo(self, arguments):
@@ -50,7 +63,18 @@ class CommandHandler:
             return rcluster.protocol.replies.BulkReply(data=arguments[0])
         else:
             raise rcluster.protocol.exceptions.CommandError(
-                data=b"ERR Wrong number of arguments (expected 1).",
+                data=b"ERR Expected> ECHO data",
+            )
+
+    def _on_info(self, arguments):
+        if not arguments:
+            info = self._get_info()
+            if not info:
+                raise ValueError("Info should not be None or empty.")
+            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(info))
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> INFO",
             )
 
     def _on_quit(self, arguments):
@@ -61,7 +85,7 @@ class CommandHandler:
             )
         else:
             raise rcluster.protocol.exceptions.CommandError(
-                data=b"ERR Wrong number of arguments (expected no arguments).",
+                data=b"ERR Expected> QUIT",
             )
 
 
@@ -257,6 +281,8 @@ class _RequestHandler:
     def _reply(self, reply):
         data = rcluster.protocol.replies.ReplyEncoder.encode(reply)
         self._logger.debug("%s", data)
+        if data is None:
+            raise ValueError("Invalid reply value.")
         self._stream.write(
             data,
             callback=(

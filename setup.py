@@ -64,6 +64,7 @@ setuptools.setup(
         "rcluster.protocol.exceptions",
         "rcluster.protocol.replies",
         "rcluster.shard",
+        "rcluster.shard.exceptions",
         "rcluster.shared",
         "rcluster.tests",
         "rcluster.tools",

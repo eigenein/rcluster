@@ -39,7 +39,7 @@ def shard_set_id():
         dest="port_number",
         type=int,
         metavar="PORT",
-        default=6379,
+        default=rcluster.shared.DEFAULT_REDIS_PORT,
         help="Redis port (default: %(default)s)",
     )
     parser.add_argument(

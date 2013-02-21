@@ -7,6 +7,7 @@ from rcluster.protocol.replies import (
     IntegerReply,
     BulkReply,
     MultiBulkReply,
+    NoneReply,
 
     ReplyEncoder,
 )
@@ -58,4 +59,10 @@ class TestReplyEncoder(unittest.TestCase):
                 b"World\r\n"
             ),
             data,
+        )
+
+    def test_encode_none(self):
+        self.assertEqual(
+            b"$-1\r\n",
+            ReplyEncoder.encode(NoneReply()),
         )

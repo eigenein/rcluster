@@ -12,6 +12,7 @@ class _Reply:
     INTEGER_REPLY = 2
     BULK_REPLY = 3
     MULTI_BULK_REPLY = 4
+    NONE_REPLY = 5
 
     def __init__(self, quit=False):
         self.quit = quit
@@ -79,6 +80,13 @@ class MultiBulkReply(_Reply):
         )
 
 
+class NoneReply(_Reply):
+    reply_type = _Reply.NONE_REPLY
+
+    def __init__(self, quit=False):
+        super(NoneReply, self).__init__(quit=quit)
+
+
 class ReplyEncoder:
     """
     Encodes the reply.
@@ -86,7 +94,7 @@ class ReplyEncoder:
 
     @classmethod
     def encode(cls, reply):
-        if reply is None:
+        if reply is None or reply.reply_type == _Reply.NONE_REPLY:
             return b"$-1\r\n"
         elif reply.reply_type == _Reply.STATUS_REPLY:
             return cls._encode_status(reply)
