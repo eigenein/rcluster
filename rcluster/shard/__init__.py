@@ -51,13 +51,13 @@ class _ClusterState:
 
     # Global cluster states.
 
-    # The cluster contains no shards.
+    ## The cluster contains no shards.
     EMPTY = 0
-    # Available for read, but some slots are not available.
+    ## Available for read, but some slots are not available.
     READ_ONLY_PARTIAL = 1
-    # Available for read only.
+    ## Available for read only.
     READ_ONLY = 2
-    # The cluster is OK.
+    ## The cluster is OK.
     OK = 3
 
     # Key templates.
@@ -92,8 +92,15 @@ class _ClusterState:
         """
 
         try:
-            # TODO: Read all the state within one transaction.
-            self._state = self._redis.get(self.CLUSTER_STATE_KEY) or self.EMPTY
+            with self._redis.pipeline(transaction=False) as pipeline:
+                pipeline.get(self.CLUSTER_STATE_KEY)
+                # Merge obtained values with the default ones.
+                (self._state, ) = rcluster.shared.merge(
+                    rcluster.shared.none_coalescing,
+                    pipeline.execute(), (
+                        _ClusterState.EMPTY,
+                    ),
+                )
         except Exception as ex:
             raise rcluster.shard.exceptions.ClusterStateOperationError(
                 "Failed to get the global cluster state.",
@@ -243,6 +250,7 @@ def entry_point():
 
     logger.info("Done. Starting the shard ...")
     Shard(args.port_number, cluster_state).start()
+    logger.info("Done. The cluster state is %s." % cluster_state.state)
 
     logger.info("IO loop is being started.")
     logger.info(

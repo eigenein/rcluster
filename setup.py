@@ -67,6 +67,8 @@ setuptools.setup(
         "rcluster.shard.exceptions",
         "rcluster.shared",
         "rcluster.tests",
+        "rcluster.tests.protocol",
+        "rcluster.tests.shared",
         "rcluster.tools",
     ],
     # Entry points.

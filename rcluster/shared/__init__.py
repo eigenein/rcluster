@@ -5,6 +5,9 @@
 Shared variables, functions and classes.
 """
 
+import functools
+
+
 # The key that stores the shard ID.
 SHARD_ID_KEY = "rcluster:shard:id"
 
@@ -15,3 +18,18 @@ DEFAULT_SHARD_PORT = 6380
 
 # The mask to convert a hash into the slot number.
 HASH_MASK = 0xFFF
+
+
+def merge(function, *iterables):
+    """
+    Merges several iterables using the specified function.
+    """
+
+    return (function(*values) for values in zip(*iterables))
+
+
+def none_coalescing(*values):
+    return functools.reduce(
+        lambda a, b: b if a is None else a,
+        values,
+    )
