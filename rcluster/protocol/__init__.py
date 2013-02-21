@@ -5,6 +5,7 @@
 Redis Protocol classes.
 """
 
+import itertools
 import logging
 import traceback
 
@@ -44,11 +45,11 @@ class CommandHandler:
         Gets the server state information.
         """
 
-        return [
-            b"# Server",
-            b"commands:" + b",".join(self._handlers.keys()),
-            b"",
-        ]
+        return {
+            b"Server": {
+                b"commands:": b",".join(self._handlers.keys()),
+            },
+        }
 
     def _on_ping(self, arguments):
         if not arguments:
@@ -71,7 +72,10 @@ class CommandHandler:
             info = self._get_info()
             if not info:
                 raise ValueError("Info should not be None or empty.")
-            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(info))
+            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
+                itertools.chain(
+                ),
+            ))
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> INFO",

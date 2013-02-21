@@ -6,6 +6,7 @@ Redis Cluster Shard.
 """
 
 import argparse
+import itertools
 import logging
 import os
 import time
@@ -95,10 +96,14 @@ class _ClusterState:
             with self._redis.pipeline(transaction=False) as pipeline:
                 pipeline.get(self.CLUSTER_STATE_KEY)
                 # Merge obtained values with the default ones.
-                (self._state, ) = rcluster.shared.merge(
-                    rcluster.shared.none_coalescing,
-                    pipeline.execute(), (
-                        _ClusterState.EMPTY,
+                (self._state, ) = itertools.starmap(
+                    lambda value, default_value: (
+                        value if value is not None else default_value
+                    ),
+                    zip(
+                        pipeline.execute(), [
+                            _ClusterState.EMPTY,
+                        ],
                     ),
                 )
         except Exception as ex:
@@ -128,11 +133,11 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
 
     def _get_info(self):
         info = super()._get_info()
-        info.extend([
-            b"# Cluster",
-            b"state:" + bytes(str(self._shard.cluster_state), "ascii"),
-            b"",
-        ])
+        info.update({
+            b"Cluster": {
+                b"state": bytes(str(self._shard.cluster_state), "ascii"),
+            },
+        })
         return info
 
     def _get_handler(self, handler):
