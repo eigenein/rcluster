@@ -50,7 +50,9 @@ class Shard(rcluster.protocol.Server):
             slot_id for slot_id, slot in self._cluster_state.slots.items()
             # If there is no any available shard with this slot.
             if not any(
-                self._cluster_state.shards[shard_id]["state"] == _ClusterState.SHARD_OK
+                self._cluster_state.shards[shard_id]["state"] == (
+                    _ClusterState.SHARD_OK
+                )
                 for shard_id in slot["shards"]
                 if shard_id in self._cluster_state.shards
             )
@@ -120,9 +122,10 @@ class Shard(rcluster.protocol.Server):
     def _do_balancing(self):
         # Phase 1.
         # Constructing the migration plan.
-        plan = {}
-        for slot in range(rcluster.shared.SLOT_COUNT):
-            pass
+        # plan = {}
+        # for slot in range(rcluster.shared.SLOT_COUNT):
+        #     pass
+        pass
 
 
 class _ClusterState:
