@@ -62,7 +62,7 @@ class Shard(rcluster.protocol.Server):
         super().start()
         # Initial balancing.
         self._refresh_state()
-        if self._cluster_state.state != _ClusterState.EMPTY:
+        if self._cluster_state.state == _ClusterState.OK:
             # TODO: revert active migrations.
             self._do_balancing()
 
@@ -77,8 +77,11 @@ class Shard(rcluster.protocol.Server):
             ):
                 shard_id = connection.get(rcluster.shared.SHARD_ID_KEY)
         except redis.exceptions.ConnectionError as ex:
-            raise rcluster.exceptions.ShardIsNotAvailable() from ex
+            raise rcluster.shard.exceptions.ShardIsNotAvailable() from ex
         else:
+            # TODO: if the shard is already here as unavailable
+            # and cluster is OK then wipe the shard ID from all slots.
+            # This is because this shard contains not actual data anymore.
             self._cluster_state.add_shard(
                 shard_id,
                 host,
@@ -144,14 +147,19 @@ class Shard(rcluster.protocol.Server):
             )),
         )
         for slot_id in range(rcluster.shared.SLOT_COUNT):
+            # Check out the least busy shards to store the slot on.
             plans = [
                 plan.pop()
                 for i in range(self._cluster_state.replicaness)
             ]
             for shard_plan in plans:
+                # Store the slot.
                 shard_plan["slots"].append(slot_id)
+                # Push the updated shard back.
                 plan.push(shard_plan)
+        # Flatten the queue.
         plan = list(plan)
+        # Debug output.
         self._logger.debug("Balancing plan follows:")
         for shard_plan in plan:
             self._logger.debug(
@@ -163,6 +171,57 @@ class Shard(rcluster.protocol.Server):
         # Phase 2.
         # Constructing migration tasks.
         self._logger.debug("Phase 2 ...")
+        tasks = {
+            slot_id: {
+                "shards": [],
+                "migrations": [],
+            }
+            for slot_id in range(rcluster.shared.SLOT_COUNT)
+        }
+        for shard_plan in plan:
+            target_shard_id = shard_plan["shard_id"]
+            for slot_id in shard_plan["slots"]:
+                slot = self._cluster_state.slots[slot_id]
+                # Mark that the slot will be available on this shard.
+                tasks[slot_id]["shards"].append(target_shard_id)
+                # If the slot is not actually stored on this shard ...
+                if target_shard_id not in slot["shards"]:
+                    # ... then migrate it ...
+                    tasks[slot_id]["migrations"].extend(
+                        # ... from available shards with this slot ...
+                        shard_id for shard_id in slot["shards"]
+                        if (self._cluster_state.shards[shard_id]["state"] ==
+                            _ClusterState.SHARD_OK)
+                    )
+        self._logger.debug("Computing tasks summary ...")
+        tasks_summary = {}
+        for task in tasks.values():
+            for target_shard_id in task["shards"]:
+                for source_shard_id in task["migrations"]:
+                    # Compute the migration count for each direction.
+                    direction = (source_shard_id, target_shard_id)
+                    if direction in tasks_summary:
+                        tasks_summary[direction] += 1
+                    else:
+                        tasks_summary[direction] = 1
+        self._logger.debug("Tasks summary follows:")
+        for direction, count in tasks_summary.items():
+            self._logger.debug(
+                "%s -> %s: %s migration(s).",
+                direction[0],
+                direction[1],
+                count,
+            )
+
+        # Phase 3.
+        # Updating the cluster state.
+        # Validating the cluster state.
+        self._logger.debug("Phase 3 ...")
+        pass
+
+        # Phase 4.
+        # Scheduling the migrations if there are no validation errors.
+        self._logger.debug("Phase 4 ...")
         pass
 
         self._logger.info("Balancing is done.")
@@ -467,10 +526,16 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
 
         try:
             state = self._shard.add_shard(host, port_number)
-        except Exception as ex:
-            # TODO.
+        except rcluster.shard.exceptions.ShardIsNotAvailable:
             return rcluster.protocol.replies.ErrorReply(
-                value=b"ERR Internal server error.",
+                data=b"ERR Could not connect to the specified instance.",
+                quit=False,
+            )
+        # TODO: Handle Redis master instance failure with
+        # the specific message.
+        except Exception as ex:
+            return rcluster.protocol.replies.ErrorReply(
+                data=b"ERR Internal server error.",
                 quit=False,
             )
         else:
