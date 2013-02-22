@@ -45,6 +45,17 @@ class Shard(rcluster.protocol.Server):
     def shards(self):
         return dict(self._cluster_state.shards)
 
+    def get_unavailable_slots(self):
+        return {
+            slot_id for slot_id, slot in self._cluster_state.slots.items()
+            # If there is no any available shard with this slot.
+            if not any(
+                self._cluster_state.shards[shard_id]["state"] == _ClusterState.SHARD_OK
+                for shard_id in slot["shards"]
+                if shard_id in self._cluster_state.shards
+            )
+        }
+
     def start(self):
         super().start()
         # Initial balancing.
@@ -53,7 +64,7 @@ class Shard(rcluster.protocol.Server):
 
     def add_shard(self, host, port_number=rcluster.shared.DEFAULT_REDIS_PORT):
         try:
-            shard_id = uuid.uuid4()
+            shard_id = str(uuid.uuid4())
             connection = redis.StrictRedis(host, port_number)
             # Obtain the shard ID.
             if not connection.setnx(
@@ -70,6 +81,9 @@ class Shard(rcluster.protocol.Server):
                 port_number,
                 _ClusterState.SHARD_OK,
             )
+            if self._cluster_state.state == _ClusterState.EMPTY:
+                # First-time initialization.
+                self._initialize_slots(shard_id)
             # Refresh state.
             self._refresh_state()
             # And re-balance.
@@ -80,6 +94,16 @@ class Shard(rcluster.protocol.Server):
     def _create_handler(self):
         return _ShardCommandHandler(self)
 
+    def _initialize_slots(self, shard_id):
+        slots = {
+            slot_id: {
+                "shards": {shard_id},
+                "migrations": {},
+            }
+            for slot_id in range(rcluster.shared.SLOT_COUNT)
+        }
+        self._cluster_state.save_slots(slots)
+
     def _refresh_state(self):
         shards = self._cluster_state.shards
 
@@ -87,25 +111,18 @@ class Shard(rcluster.protocol.Server):
             self._cluster_state.state = _ClusterState.EMPTY
             return
 
-        # Collect unavailable slots.
-        unavailable_slots = {
-            slot for slot in self._cluster_state.slots
-            # If there is no any available shard with this slot.
-            if not any(
-                self._shards[shard_id]["state"] == _ClusterState.SHARD_OK
-                for shard_id in slot["shards"]
-                if shard_id in self._shards
-            )
-        }
         # Check for unavailable slots.
-        if unavailable_slots:
+        if self.get_unavailable_slots():
             self._cluster_state.state = _ClusterState.PARTIAL
         else:
             self._cluster_state.state = _ClusterState.OK
 
     def _do_balancing(self):
-        # TODO.
-        pass
+        # Phase 1.
+        # Constructing the migration plan.
+        plan = {}
+        for slot in range(rcluster.shared.SLOT_COUNT):
+            pass
 
 
 class _ClusterState:
@@ -146,6 +163,10 @@ class _ClusterState:
     SHARD_HOST_KEY_TEMPLATE = SHARD_ENTRY_TEMPLATE % "%s:host"
     SHARD_PORT_KEY_TEMPLATE = SHARD_ENTRY_TEMPLATE % "%s:port"
     SHARD_STATE_KEY_TEMPLATE = SHARD_ENTRY_TEMPLATE % "%s:state"
+
+    ## Slots information keys.
+    SLOT_SHARDS_KEY = "rcluster:slots:%s:shards"
+    SLOT_MIGRATIONS_KEY = "rcluster:slots:%s:migrations"
 
     def __init__(self, redis):
         """
@@ -224,19 +245,34 @@ class _ClusterState:
                 _ClusterState.SHARD_IDS_KEY,
             ) or []
 
+            self._logger.info("Loading shards ...")
             for shard_id in shard_ids:
                 shard_id_str = str(shard_id, "utf-8")
                 self._shards[shard_id] = {
                     "host": self._redis.get(
                         _ClusterState.SHARD_HOST_KEY_TEMPLATE % shard_id_str,
                     ),
-                    "port": int(self._redis.get(
+                    "port_number": int(self._redis.get(
                         _ClusterState.SHARD_PORT_KEY_TEMPLATE % shard_id_str,
                     )),
                     "state": int(self._redis.get(
                         _ClusterState.SHARD_STATE_KEY_TEMPLATE % shard_id_str,
                     )),
                 }
+            self._logger.info("Shards are loaded.")
+
+            if self._state != _ClusterState.EMPTY:
+                self._logger.info("Loading slots ...")
+                for slot_id in range(rcluster.shared.SLOT_COUNT):
+                    self._slots[slot_id] = {
+                        "shards": set(self._redis.smembers(
+                            _ClusterState.SLOT_SHARDS_KEY % slot_id,
+                        )),
+                        "migrations": set(self._redis.smembers(
+                            _ClusterState.SLOT_MIGRATIONS_KEY % slot_id,
+                        )),
+                    }
+                self._logger.info("Slots are loaded.")
         except Exception as ex:
             raise rcluster.shard.exceptions.ClusterStateOperationError(
                 "Failed to get the cluster state.",
@@ -288,6 +324,32 @@ class _ClusterState:
                 "state": state,
             }
 
+    def save_slots(self, slots):
+        try:
+            with self._redis.pipeline(transaction=False) as pipeline:
+                for slot_id, slot in slots.items():
+                    pipeline.delete(_ClusterState.SLOT_SHARDS_KEY % slot_id)
+                    if slot["shards"]:
+                        pipeline.sadd(
+                            _ClusterState.SLOT_SHARDS_KEY % slot_id,
+                            *slot["shards"]
+                        )
+                    pipeline.delete(
+                        _ClusterState.SLOT_MIGRATIONS_KEY % slot_id,
+                    )
+                    if slot["migrations"]:
+                        pipeline.sadd(
+                            _ClusterState.SLOT_MIGRATIONS_KEY % slot_id,
+                            *slot["migrations"]
+                        )
+                pipeline.execute()
+        except Exception as ex:
+            raise rcluster.shard.exceptions.ClusterStateOperationError(
+                "Failed to save slots.",
+            ) from ex
+        else:
+            self._slots = slots
+
     def _timestamp(self):
         return int(time.time())
 
@@ -314,6 +376,12 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
                     bytes(str(shard["state"]), "ascii")
                 ) for shard_id, shard in self._shard.shards.items()
             },
+            b"Slots": {
+                b"unavailable": b",".join(
+                    bytes(str(slot_id), "ascii")
+                    for slot_id in self._shard.get_unavailable_slots(),
+                ),
+            }
         })
         return info
 
