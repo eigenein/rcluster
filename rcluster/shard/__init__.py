@@ -62,7 +62,9 @@ class Shard(rcluster.protocol.Server):
         super().start()
         # Initial balancing.
         self._refresh_state()
-        self._do_balancing()
+        if self._cluster_state.state != _ClusterState.EMPTY:
+            # TODO: revert active migrations.
+            self._do_balancing()
 
     def add_shard(self, host, port_number=rcluster.shared.DEFAULT_REDIS_PORT):
         try:
@@ -120,12 +122,50 @@ class Shard(rcluster.protocol.Server):
             self._cluster_state.state = _ClusterState.OK
 
     def _do_balancing(self):
+        self._logger.info("Balancing ...")
+
         # Phase 1.
         # Constructing the migration plan.
-        # plan = {}
-        # for slot in range(rcluster.shared.SLOT_COUNT):
-        #     pass
+        self._logger.debug("Phase 1 ...")
+        plan = rcluster.shared.PriorityQueue(
+            initial=(
+                {
+                    "shard_id": shard_id,
+                    "slots": [],
+                }
+                for shard_id, shard in self._cluster_state.shards.items()
+                if shard["state"] == _ClusterState.SHARD_OK
+            ),
+            # Use (slot count, shard ID) as the priority queue key.
+            # We really need this as lengths can be equal.
+            key=lambda shard_plan: ((
+                len(shard_plan["slots"]),
+                shard_plan["shard_id"],
+            )),
+        )
+        for slot_id in range(rcluster.shared.SLOT_COUNT):
+            plans = [
+                plan.pop()
+                for i in range(self._cluster_state.replicaness)
+            ]
+            for shard_plan in plans:
+                shard_plan["slots"].append(slot_id)
+                plan.push(shard_plan)
+        plan = list(plan)
+        self._logger.debug("Balancing plan follows:")
+        for shard_plan in plan:
+            self._logger.debug(
+                "Shard %s: %s slot(s)",
+                shard_plan["shard_id"],
+                len(shard_plan["slots"]),
+            )
+
+        # Phase 2.
+        # Constructing migration tasks.
+        self._logger.debug("Phase 2 ...")
         pass
+
+        self._logger.info("Balancing is done.")
 
 
 class _ClusterState:
@@ -244,6 +284,10 @@ class _ClusterState:
             self._replicaness = int(self._redis.get(
                 _ClusterState.CLUSTER_REPLICANESS_KEY,
             ) or 1)
+            self._logger.info(
+                "Replicaness is %s.",
+                repr(self._replicaness),
+            )
             shard_ids = self._redis.smembers(
                 _ClusterState.SHARD_IDS_KEY,
             ) or []
