@@ -8,6 +8,10 @@ Shared variables, functions and classes.
 import heapq
 
 
+# The default redis-shard port.
+DEFAULT_SHARD_PORT = 6379
+
+
 class PriorityQueue:
     """
     Wraps heapq module functions into the class.

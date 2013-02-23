@@ -8,7 +8,6 @@ Redis Cluster Shard.
 import argparse
 import logging
 import os
-import time
 import traceback
 import uuid
 
@@ -24,6 +23,8 @@ import rcluster.shared
 
 
 class Shard(rcluster.protocol.Server):
+    SHARD_ID_KEY = "rcluster:shard:id"
+
     def __init__(self, port_number):
         super(Shard, self).__init__(
             port_number=port_number,
@@ -31,6 +32,44 @@ class Shard(rcluster.protocol.Server):
         )
 
         self._logger = logging.getLogger("rcluster.shard.Shard")
+        self._shards = dict()
+
+    def add_shard(self, host, port_number, db):
+        self._logger.info(
+            "Adding shard: %s:%s/%d",
+            host,
+            port_number,
+            db,
+        )
+        connection = redis.StrictRedis(
+            host=host,
+            port=port_number,
+            db=db,
+            decode_responses=True,
+        )
+        shard_id = uuid.uuid4().hex
+        try:
+            if not connection.setnx(Shard.SHARD_ID_KEY, shard_id):
+                shard_id = connection.get(Shard.SHARD_ID_KEY)
+        except redis.exceptions.ConnectionError as ex:
+            raise rcluster.shard.exceptions.ShardConnectionError(
+                "Could not connect to the specified shard.",
+            ) from ex
+        else:
+            is_new_shard = shard_id in self._shards
+            self._shards[shard_id] = connection
+            return is_new_shard
+
+    def is_shard_alive(self, shard_id):
+        connection = self._shards.get(shard_id)
+        if connection is None:
+            return False
+        try:
+            connection.ping()
+        except redis.exceptions.ConnectionError:
+            return False
+        else:
+            return True
 
     def _create_handler(self):
         return _ShardCommandHandler(self)
@@ -40,23 +79,54 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
     def __init__(self, shard):
         super(_ShardCommandHandler, self).__init__({
             b"ADDSHARD": self._on_add_shard,
+            b"GET": lambda arguments: None,
+            b"SET": lambda arguments: None,
         })
 
         self._shard = shard
 
-    def _get_info(self):
-        info = super()._get_info()
-        info.update({
-            # TODO.
-        })
+    def _get_info(self, section):
+        info = super()._get_info(section)
+        if section is None or section == b"Shards":
+            info.update({
+                b"Shards": {
+                    b"count": bytes(str(len(self._shard._shards)), "ascii"),
+                    b"status": b"".join(
+                        b"." if self._shard.is_shard_alive(shard_id) else b"F"
+                        for shard_id in self._shard._shards
+                    ),
+                },
+            })
         return info
 
-    def _on_add_shard(self):
-        if len(arguments) == 1:
-            return rcluster.protocol.replies.BulkReply(data=arguments[0])
+    def _on_add_shard(self, arguments):
+        if len(arguments) == 3:
+            host, port_number, db = arguments
+            try:
+                host = str(host, "utf-8")
+                port_number = int(port_number)
+                db = int(db)
+            except ValueError as ex:
+                raise rcluster.protocol.exceptions.CommandError(
+                    data=b"ERR " + bytes(str(ex), "utf-8"),
+                )
+            else:
+                try:
+                    is_new_shard = self._shard.add_shard(host, port_number, db)
+                except rcluster.shard.exceptions.ShardConnectionError:
+                    return rcluster.protocol.replies.ErrorReply(
+                        data=b"ERR Could not connect to the shard.",
+                    )
+                else:
+                    return rcluster.protocol.replies.StatusReply(
+                        data=(
+                            b"OK Shard is added."
+                            if is_new_shard else b"OK Shard is updated."
+                        ),
+                    )
         else:
             raise rcluster.protocol.exceptions.CommandError(
-                data=b"ERR Expected> ECHO data",
+                data=b"ERR Expected> ADDSHARD host port_number db",
             )
 
 
