@@ -64,18 +64,14 @@ setuptools.setup(
         "rcluster.protocol.exceptions",
         "rcluster.protocol.replies",
         "rcluster.shard",
-        "rcluster.shard.exceptions",
         "rcluster.shared",
         "rcluster.tests",
         "rcluster.tests.protocol",
-        "rcluster.tests.shared",
-        "rcluster.tools",
     ],
     # Entry points.
     entry_points={
         "console_scripts": [
             "rcluster-shard = rcluster.shard:entry_point",
-            "rcluster-shard-set-id = rcluster.tools:shard_set_id"
         ],
     },
     # Other files.

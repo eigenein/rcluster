@@ -8,19 +8,6 @@ Shared variables, functions and classes.
 import heapq
 
 
-# The key that stores the shard ID.
-SHARD_ID_KEY = "rcluster:shard:id"
-
-# Default Redis server port.
-DEFAULT_REDIS_PORT = 6379
-# Default port to connect to Redis Cluster.
-DEFAULT_SHARD_PORT = 6380
-
-# The mask to convert a hash into the slot number.
-HASH_MASK = 0xFFF
-SLOT_COUNT = 4096
-
-
 class PriorityQueue:
     """
     Wraps heapq module functions into the class.
@@ -51,4 +38,4 @@ class PriorityQueue:
 
     def __iter__(self):
         # Select only the payload, not the key.
-        return (t[1] for t in self._data)
+        return (item[1] for item in self._data)
