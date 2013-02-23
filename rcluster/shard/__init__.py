@@ -32,7 +32,16 @@ class Shard(rcluster.protocol.Server):
         )
 
         self._logger = logging.getLogger("rcluster.shard.Shard")
+        self._replicaness = 1
         self._shards = dict()
+
+    @property
+    def replicaness(self):
+        return self._replicaness
+
+    @replicaness.setter
+    def replicaness(self, replicaness):
+        self._replicaness = replicaness
 
     def add_shard(self, host, port_number, db):
         self._logger.info(
@@ -96,6 +105,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
             b"ADDSHARD": self._on_add_shard,
             b"GET": self._on_get,
             b"SET": self._on_set,
+            b"SETREPLICANESS": self._on_set_replicaness,
         })
 
         self._logger = logging.getLogger("rcluster.shard._ShardCommandHandler")
@@ -113,6 +123,16 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
                     b"count": bytes(str(len(self._shard._shards)), "ascii"),
                     b"status": status,
                 },
+            })
+        if section is None or section == b"Cluster":
+            replicaness_value = bytes(
+                str(self._shard.replicaness),
+                "ascii",
+            )
+            info.update({
+                b"Cluster": {
+                    b"replicaness": replicaness_value,
+                }
             })
         return info
 
@@ -171,6 +191,32 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> SET key data",
+            )
+
+    def _on_set_replicaness(self, arguments):
+        if len(arguments) == 1:
+            try:
+                replicaness = int(arguments[0])
+            except ValueError as ex:
+                raise rcluster.protocol.exceptions.CommandError(
+                    data=b"ERR " + bytes(str(ex), "utf-8"),
+                )
+            else:
+                if replicaness >= 1:
+                    self._shard.replicaness = replicaness
+                    return rcluster.protocol.replies.StatusReply(
+                        data=(
+                            b"OK" if replicaness <= len(self._shard._shards)
+                            else b"OK Add more shards."
+                        ),
+                    )
+                else:
+                    raise rcluster.protocol.exceptions.CommandError(
+                        data=b"ERR Invalid replicaness value.",
+                    )
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> SETREPLICANESS replicaness",
             )
 
 
