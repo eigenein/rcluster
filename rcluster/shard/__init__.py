@@ -104,13 +104,14 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
     def _get_info(self, section):
         info = super()._get_info(section)
         if section is None or section == b"Shards":
+            status = b"".join(
+                b"." if self._shard.is_shard_alive(shard_id) else b"F"
+                for shard_id in self._shard._shards
+            )
             info.update({
                 b"Shards": {
                     b"count": bytes(str(len(self._shard._shards)), "ascii"),
-                    b"status": b"".join(
-                        b"." if self._shard.is_shard_alive(shard_id) else b"F"
-                        for shard_id in self._shard._shards
-                    ),
+                    b"status": status,
                 },
             })
         return info
