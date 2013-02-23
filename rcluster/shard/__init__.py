@@ -56,7 +56,7 @@ class Shard(rcluster.protocol.Server):
                 "Could not connect to the specified shard.",
             ) from ex
         else:
-            is_new_shard = shard_id in self._shards
+            is_new_shard = shard_id not in self._shards
             self._shards[shard_id] = connection
             return is_new_shard
 
