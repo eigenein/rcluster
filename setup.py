@@ -79,14 +79,8 @@ setuptools.setup(
     },
     # Dependencies.
     install_requires=[
-        # Redis driver is obviously required to communicate with Redis.
-        "redis>=2.7.2",
         # Tornado is used for all communications.
         "tornado>=2.4.1",
-        # Using Hiredis can provide up to a 10x speed improvement in
-        # parsing responses from the Redis server.
-        # https://github.com/andymccurdy/redis-py#parsers
-        "hiredis",
     ],
     # Custom commands.
     cmdclass={

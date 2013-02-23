@@ -7,6 +7,10 @@ Redis protocol exceptions.
 
 
 class UnknownCommandError(Exception):
+    """
+    Unknown command is read.
+    """
+
     pass
 
 

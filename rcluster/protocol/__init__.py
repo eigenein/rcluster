@@ -8,7 +8,9 @@ Redis Protocol classes.
 import itertools
 import logging
 import traceback
+import socket
 
+import tornado.iostream
 import tornado.netutil
 
 import rcluster.protocol.exceptions
@@ -71,7 +73,7 @@ class CommandHandler:
 
     def _on_echo(self, arguments):
         if len(arguments) == 1:
-            return rcluster.protocol.replies.BulkReply(data=arguments[0])
+            return rcluster.protocol.replies.BulkReply(data=arguments[0].data)
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> ECHO data",
@@ -82,7 +84,7 @@ class CommandHandler:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> INFO [section]",
             )
-        info = self._get_info(arguments[0] if arguments else None)
+        info = self._get_info(arguments[0].data if arguments else None)
         return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
             itertools.chain(*(
                 self._serialize_info_section(section_name, section)
@@ -137,10 +139,10 @@ class _StreamHandler:
 
     def __init__(self, stream, address, command_handler):
         self._logger = logging.getLogger("rcluster.protocol._StreamHandler")
-        self._stream = stream
         self._address = address
         self._command_handler = command_handler
 
+        self._stream = stream
         self._stream.set_close_callback(self._on_disconnected)
 
     def start(self):
@@ -155,125 +157,23 @@ class _StreamHandler:
         Serves the incoming request.
         """
 
-        _RequestHandler(
-            self._stream,
-            self._command_handler,
-            self._serve_request,
-        ).handle()
+        _MultiBulkReplyReader(
+            stream=self._stream,
+            callback=self._on_read_request,
+            read_reply_type=True,
+        ).read()
 
-    def _on_disconnected(self):
-        """
-        Called when client has disconnected.
-        """
-
-        self._logger.info("Connection with %s is closed.", self._address)
-
-
-class _RequestHandler:
-    """
-    Handles a single incoming request.
-    """
-
-    def __init__(self, stream, command_handler, callback):
-        self._logger = logging.getLogger("rcluster.protocol._RequestHandler")
-        self._stream = stream
-        self._command_handler = command_handler
-        self._callback = callback
-
-        self._arguments = list()
-
-    def handle(self):
-        self._stream.read_until(b"\r\n", callback=self._on_read_argument_count)
-
-    def _on_read_argument_count(self, data):
-        """
-        Called when the line with the argument count is read.
-        """
-
-        try:
-            if not data or data[0] != ord("*"):
-                raise ValueError()
-            self._argument_count = int(data[1:].rstrip())
-        except ValueError:
-            self._reply(
-                rcluster.protocol.replies.ErrorReply(
-                    data=b"ERR *<number of arguments> CR LF is expected.",
-                ),
-            )
-        else:
-            if self._argument_count > 0:
-                self._stream.read_until(b"\r\n", self._on_read_argument_length)
-            else:
-                # There is no request - just skip any processing.
-                self._callback()
-
-    def _on_read_argument_length(self, data):
-        """
-        Called when the line with the argument length is read.
-        """
-
-        try:
-            if not data or data[0] != ord("$"):
-                raise ValueError()
-            argument_length = int(data[1:].rstrip())
-        except ValueError:
-            self._reply(
-                rcluster.protocol.replies.ErrorReply(
-                    data=(
-                        b"ERR $<number of bytes of argument>"
-                        b" CR LF is expected."
-                    ),
-                ),
-            )
-        else:
-            if argument_length > 0:
-                self._stream.read_bytes(
-                    argument_length,
-                    callback=self._on_read_argument_value,
-                )
-            elif argument_length == 0:
-                self._on_read_argument_value(bytes(0))
-            else:
-                # Negative argument length is treated as None value.
-                self._on_read_argument_value(None)
-
-    def _on_read_argument_value(self, data):
-        """
-        Called when the argument value is read.
-        """
-
-        self._arguments.append(data)
-        self._argument_count -= 1
-        self._stream.read_until(
-            b"\r\n",
-            callback=(
-                self._on_read_argument
-                if self._argument_count
-                else self._on_read_request
-            ),
-        )
-
-    def _on_read_argument(self, data):
-        """
-        Called when the argument value tail is read.
-        """
-
-        self._stream.read_until(
-            b"\r\n",
-            callback=self._on_read_argument_length,
-        )
-
-    def _on_read_request(self, data):
+    def _on_read_request(self, request):
         """
         Called when the entire request is read. The last argument tail
         is dropped.
         """
 
         # The very first argument is a command.
-        command, *arguments = self._arguments
+        command, *arguments = request.replies
 
         try:
-            reply = self._command_handler.handle(command, arguments)
+            reply = self._command_handler.handle(command.data, arguments)
             if reply is None:
                 reply = rcluster.protocol.replies.NoneReply()
         except rcluster.protocol.exceptions.CommandError as ex:
@@ -297,11 +197,179 @@ class _RequestHandler:
         data = rcluster.protocol.replies.ReplyEncoder.encode(reply)
         self._logger.debug("%s", data)
         if data is None:
-            raise ValueError("Invalid reply value.")
+            raise ValueError("Reply is None.")
         self._stream.write(
             data,
             callback=(
-                self._callback if not reply.quit
-                else self._stream.close
+                self._serve_request if not reply.quit
+                else self._read_reader.close
             ),
         )
+
+    def _on_disconnected(self):
+        """
+        Called when client has disconnected.
+        """
+
+        self._logger.info("Connection with %s is closed.", self._address)
+
+
+class _ReplyReader:
+    """
+    Reads Protocol Redis replies.
+    """
+
+    def __init__(self, stream, callback):
+        self._logger = logging.getLogger("rcluster.protocol._ReplyReader")
+        self._stream = stream
+        self._callback = callback
+
+    def read(self):
+        # Read the reply type.
+        self._stream.read_bytes(1, callback=self._on_read_reply_type)
+
+    def _on_read_reply_type(self, data):
+        reply_type = data[0]
+        if reply_type == ord("+"):
+            self._stream.read_until(
+                b"\r\n",
+                callback=self._on_read_status_reply,
+            )
+        elif reply_type == ord("-"):
+            self._stream.read_until(
+                b"\r\n",
+                callback=self._on_read_error_reply,
+            )
+        elif reply_type == ord(":"):
+            self._stream.read_until(
+                b"\r\n",
+                callback=self._on_read_integer_reply,
+            )
+        elif reply_type == ord("$"):
+            # Reply type is already read.
+            _BulkReplyReader(self._stream, self._callback, False).read()
+        elif reply_type == ord("*"):
+            # Reply type is already read.
+            _MultiBulkReplyReader(self._stream, self._callback, False).read()
+        else:
+            self._stream.write(
+                rcluster.protocol.replies.ReplyEncoder.encode(
+                    rcluster.protocol.replies.ErrorReply(
+                        data=b"ERR Unknown reply type: " +
+                        bytes(repr(reply_type), "ascii"),
+                    )
+                ),
+                callback=self._stream.close,
+            )
+
+    def _on_read_status_reply(self, data):
+        self._callback(rcluster.protocol.replies.StatusReply(data=data))
+
+    def _on_read_error_reply(self, data):
+        self._callback(rcluster.protocol.replies.ErrorReply(data=data))
+
+    def _on_read_integer_reply(self, data):
+        try:
+            value = int(str(data, "ascii"))
+        except ValueError as ex:
+            self._stream.write(
+                rcluster.protocol.replies.ReplyEncoder.encode(
+                    rcluster.protocol.replies.ErrorReply(
+                        data=b"ERR ValueError: " +
+                        bytes(str(ex), "utf-8"),
+                    )
+                ),
+                callback=self._stream.close,
+            )
+        else:
+            self._callback(rcluster.protocol.replies.IntegerReply(value=value))
+
+
+class _BulkReplyReader:
+    """
+    Reads BulkReply.
+    """
+
+    def __init__(
+        self,
+        stream,
+        callback,
+        read_reply_type,
+    ):
+        self._stream = stream
+        self._callback = callback
+        self._read_reply_type = read_reply_type
+        pass
+
+    def read(self):
+        pass
+
+
+class _MultiBulkReplyReader:
+    def __init__(
+        self,
+        stream,
+        callback,
+        read_reply_type,
+    ):
+        self._stream = stream
+        self._callback = callback
+        self._read_reply_type = read_reply_type
+        pass
+
+    def read(self):
+        # Should use _BulkReplyReader with read_reply_type=True.
+        pass
+
+
+class Client:
+    """
+    Redis Protocol client.
+    """
+
+    def __init__(
+        self,
+        host="localhost",
+        port_number=6379,
+        db=0,
+    ):
+        self._address = (host, port_number)
+        self._db = db
+        self._stream = tornado.iostream.IOStream(
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0),
+        )
+
+    def gets(self, keys):
+        # TODO: _execute_commands(...)
+        pass
+
+    def setnx(self, key, data):
+        self._execute_command(
+            [b"SETNX", key, data],
+        )
+
+    def _execute_commands(self, arguments):
+        """
+        Executes the commands synchronously.
+        """
+
+        # TODO: init events, set in a local callback function and wait for
+        # the events.
+        pass
+
+    def _execute_command_async(self, arguments, callback):
+        """
+        Executes the command asynchronously.
+        """
+
+        data = rcluster.protocol.replies.ReplyEncoder.encode(
+            rcluster.protocol.replies.MultiBulkReply(
+                replies=(
+                    rcluster.protocol.replies.BulkReply(
+                        data=argument,
+                    )
+                    for argument in arguments
+                ),
+            )
+        )
+        self._stream.write(data, callback=callback)

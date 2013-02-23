@@ -11,8 +11,6 @@ import os
 import traceback
 import uuid
 
-import redis
-import redis.exceptions
 import tornado.ioloop
 
 import rcluster.protocol
@@ -23,7 +21,7 @@ import rcluster.shared
 
 
 class Shard(rcluster.protocol.Server):
-    SHARD_ID_KEY = "rcluster:shard:id"
+    SHARD_ID_KEY = b"rcluster:shard:id"
 
     def __init__(self, port_number):
         super(Shard, self).__init__(
@@ -41,44 +39,26 @@ class Shard(rcluster.protocol.Server):
             port_number,
             db,
         )
-        connection = redis.StrictRedis(
+        connection = rcluster.protocol.Client(
             host=host,
-            port=port_number,
+            port_number=port_number,
             db=db,
-            decode_responses=True,
         )
-        shard_id = uuid.uuid4().hex
+        shard_id = uuid.uuid4().bytes
         try:
             if not connection.setnx(Shard.SHARD_ID_KEY, shard_id):
                 shard_id = connection.get(Shard.SHARD_ID_KEY)
             db_size = connection.dbsize()
-        except redis.exceptions.ConnectionError as ex:
+        except Exception as ex:
+            # TODO: specific exception class.
             raise rcluster.shard.exceptions.ShardConnectionError(
                 "Could not connect to the specified shard.",
             ) from ex
         else:
-            is_new_shard = shard_id not in self._shards
-            self._logger.info(
-                "Shard is OK. New: %s. DbSize: %s.",
-                is_new_shard,
-                db_size,
-            )
             self._shards[shard_id] = {
                 "connection": connection,
                 "db_size": db_size,
             }
-            return is_new_shard
-
-    def is_shard_alive(self, shard_id):
-        connection = self._shards.get(shard_id)["connection"]
-        if connection is None:
-            return False
-        try:
-            connection.ping()
-        except redis.exceptions.ConnectionError:
-            return False
-        else:
-            return True
 
     def get(self, key):
         pass
@@ -104,14 +84,9 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
     def _get_info(self, section):
         info = super()._get_info(section)
         if section is None or section == b"Shards":
-            status = b"".join(
-                b"." if self._shard.is_shard_alive(shard_id) else b"F"
-                for shard_id in self._shard._shards
-            )
             info.update({
                 b"Shards": {
                     b"count": bytes(str(len(self._shard._shards)), "ascii"),
-                    b"status": status,
                 },
             })
         return info
@@ -128,19 +103,8 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
                     data=b"ERR " + bytes(str(ex), "utf-8"),
                 )
             else:
-                try:
-                    is_new_shard = self._shard.add_shard(host, port_number, db)
-                except rcluster.shard.exceptions.ShardConnectionError:
-                    return rcluster.protocol.replies.ErrorReply(
-                        data=b"ERR Could not connect to the shard.",
-                    )
-                else:
-                    return rcluster.protocol.replies.StatusReply(
-                        data=(
-                            b"OK Shard is added."
-                            if is_new_shard else b"OK Shard is updated."
-                        ),
-                    )
+                # TODO: add shard.
+                pass
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> ADDSHARD host port_number db",
@@ -148,7 +112,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
 
     def _on_get(self, arguments):
         if len(arguments) == 1:
-            key = str(arguments[0], "utf-8")
+            key = str(arguments[0].data, "utf-8")
             self._logger.debug("GET %s" % key)
             data = self._shard.get(key)
             if data is not None:
@@ -162,7 +126,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
 
     def _on_set(self, arguments):
         if len(arguments) == 2:
-            key, data = str(arguments[0], "utf-8"), arguments[1]
+            key, data = str(arguments[0].data, "utf-8"), arguments[1].data
             self._logger.debug("SET %s bytes(%s)" % (key, len(data)))
             self._shard.set(key, data)
             return rcluster.protocol.replies.StatusReply(
