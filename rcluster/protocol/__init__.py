@@ -339,25 +339,13 @@ class Client:
             socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0),
         )
 
-    def gets(self, keys):
-        # TODO: _execute_commands(...)
-        pass
-
-    def setnx(self, key, data):
+    def setnx(self, key, data, callback):
         self._execute_command(
             [b"SETNX", key, data],
+            callback=callback,
         )
 
-    def _execute_commands(self, arguments):
-        """
-        Executes the commands synchronously.
-        """
-
-        # TODO: init events, set in a local callback function and wait for
-        # the events.
-        pass
-
-    def _execute_command_async(self, arguments, callback):
+    def _execute_command(self, arguments, callback):
         """
         Executes the command asynchronously.
         """

@@ -46,6 +46,8 @@ class Shard(rcluster.protocol.Server):
         )
         shard_id = uuid.uuid4().bytes
         try:
+            # TODO: switch to asynchronous operations.
+            # TOOD: unclear how to handle errors.
             if not connection.setnx(Shard.SHARD_ID_KEY, shard_id):
                 shard_id = connection.get(Shard.SHARD_ID_KEY)
             db_size = connection.dbsize()
