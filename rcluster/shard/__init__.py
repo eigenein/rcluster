@@ -36,7 +36,7 @@ class Shard(rcluster.protocol.Server):
 
     def add_shard(self, host, port_number, db):
         self._logger.info(
-            "Adding shard: %s:%s/%d",
+            "Adding shard: %s:%s/%d ...",
             host,
             port_number,
             db,
@@ -51,17 +51,26 @@ class Shard(rcluster.protocol.Server):
         try:
             if not connection.setnx(Shard.SHARD_ID_KEY, shard_id):
                 shard_id = connection.get(Shard.SHARD_ID_KEY)
+            db_size = connection.dbsize()
         except redis.exceptions.ConnectionError as ex:
             raise rcluster.shard.exceptions.ShardConnectionError(
                 "Could not connect to the specified shard.",
             ) from ex
         else:
             is_new_shard = shard_id not in self._shards
-            self._shards[shard_id] = connection
+            self._logger.info(
+                "Shard is OK. New: %s. DbSize: %s.",
+                is_new_shard,
+                db_size,
+            )
+            self._shards[shard_id] = {
+                "connection": connection,
+                "db_size": db_size,
+            }
             return is_new_shard
 
     def is_shard_alive(self, shard_id):
-        connection = self._shards.get(shard_id)
+        connection = self._shards.get(shard_id)["connection"]
         if connection is None:
             return False
         try:
@@ -71,6 +80,12 @@ class Shard(rcluster.protocol.Server):
         else:
             return True
 
+    def get(self, key):
+        pass
+
+    def set(self, key, data):
+        pass
+
     def _create_handler(self):
         return _ShardCommandHandler(self)
 
@@ -79,10 +94,11 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
     def __init__(self, shard):
         super(_ShardCommandHandler, self).__init__({
             b"ADDSHARD": self._on_add_shard,
-            b"GET": lambda arguments: None,
-            b"SET": lambda arguments: None,
+            b"GET": self._on_get,
+            b"SET": self._on_set,
         })
 
+        self._logger = logging.getLogger("rcluster.shard._ShardCommandHandler")
         self._shard = shard
 
     def _get_info(self, section):
@@ -127,6 +143,33 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> ADDSHARD host port_number db",
+            )
+
+    def _on_get(self, arguments):
+        if len(arguments) == 1:
+            key = str(arguments[0], "utf-8")
+            self._logger.debug("GET %s" % key)
+            data = self._shard.get(key)
+            if data is not None:
+                return rcluster.protocol.replies.BulkReply(data=data)
+            else:
+                return rcluster.protocol.replies.NoneReply()
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> GET key",
+            )
+
+    def _on_set(self, arguments):
+        if len(arguments) == 2:
+            key, data = str(arguments[0], "utf-8"), arguments[1]
+            self._logger.debug("SET %s bytes(%s)" % (key, len(data)))
+            self._shard.set(key, data)
+            return rcluster.protocol.replies.StatusReply(
+                data=b"OK",
+            )
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> SET key data",
             )
 
 
