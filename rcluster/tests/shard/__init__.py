@@ -31,7 +31,7 @@ class TestShard(unittest.TestCase):
         shard = rcluster.shard.Shard(0)
         shard.replicaness = 2
         shard.add_shard("localhost", 6380, 0)
-        shard2_id = shard.add_shard("localhost", "6381", 0)
+        shard2_id = shard.add_shard("localhost", 6381, 0)
 
         key, data = self._key(), os.urandom(32)
         shard.set(key, data)
