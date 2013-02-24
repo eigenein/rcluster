@@ -86,7 +86,7 @@ setuptools.setup(
         # Using Hiredis can provide up to a 10x speed improvement in
         # parsing responses from the Redis server.
         # https://github.com/andymccurdy/redis-py#parsers
-        "hiredis",
+        "hiredis>=0.1.1",
     ],
     # Custom commands.
     cmdclass={
