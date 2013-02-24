@@ -9,7 +9,9 @@ install:
 before_script:
   - "redis-server --version"
   - "redis-server ./etc/redis-6380.conf"
+  - "redis-server ./etc/redis-6381.conf"
 script:
   - "python setup.py test"
 after_script:
-  - "python ./tools/stop-redis --port 6380"
+  - "python ./tools/stop-redis.py --port 6380"
+  - "python ./tools/stop-redis.py --port 6381"

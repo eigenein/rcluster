@@ -77,6 +77,12 @@ class Shard(rcluster.protocol.Server):
             )
             return shard_id
 
+    def remove_shard(self, shard_id):
+        try:
+            del self._connections[shard_id]
+        except KeyError:
+            pass
+
     def is_shard_alive(self, shard_id):
         """
         Checks whether the connection to the specified shard is alive.
