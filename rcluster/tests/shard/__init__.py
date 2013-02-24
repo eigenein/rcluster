@@ -18,6 +18,16 @@ class TestShard(unittest.TestCase):
         self.assertTrue(shard_id, "Shard ID is empty.")
         self.assertTrue(shard.is_shard_alive(shard_id), "Shard is not alive.")
 
+    def test_remove_shard(self):
+        shard = rcluster.shard.Shard(0)
+        shard_id = shard.add_shard("localhost", 6380, 0)
+        shard.remove_shard(shard_id)
+
+        self.assertFalse(
+            shard.is_shard_alive(shard_id),
+            "Removed shard is alive.",
+        )
+
     def test_set_get_key(self):
         shard = rcluster.shard.Shard(0)
         shard.add_shard("localhost", 6380, 0)
