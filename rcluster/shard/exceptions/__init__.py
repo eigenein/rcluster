@@ -2,17 +2,9 @@
 # -*- coding: utf-8 -*-
 
 
-class ClusterStateOperationError(Exception):
+class ShardConnectionError(Exception):
     """
-    Failed to get or update the cluster state.
-    """
-
-    pass
-
-
-class ShardIsNotAvailable(Exception):
-    """
-    The shard is not available or failed.
+    Could not connect to shard.
     """
 
     pass

@@ -40,7 +40,7 @@ class CommandHandler:
         else:
             raise rcluster.protocol.exceptions.UnknownCommandError()
 
-    def _get_info(self):
+    def _get_info(self, section=None):
         """
         Gets the server state information.
         """
@@ -49,7 +49,7 @@ class CommandHandler:
             b"Server": {
                 b"commands": b",".join(self._handlers.keys()),
             },
-        }
+        } if section is None or section == b"Server" else dict()
 
     def _serialize_info_section(self, section_name, section):
         """
@@ -82,23 +82,13 @@ class CommandHandler:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> INFO [section]",
             )
-        info = self._get_info()
-        if not info:
-            raise ValueError("Info should not be None or empty.")
-        # Check whether a specific section is requested.
-        if not arguments:
-            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
-                itertools.chain(*(
-                    self._serialize_info_section(section_name, section)
-                    for section_name, section in info.items()
-                )),
-            ) + b"\r\n")
-        else:
-            section_name = arguments[0]
-            section = info.get(section_name, {})
-            return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
-                self._serialize_info_section(section_name, section),
-            ) + b"\r\n")
+        info = self._get_info(arguments[0] if arguments else None)
+        return rcluster.protocol.replies.BulkReply(data=b"\r\n".join(
+            itertools.chain(*(
+                self._serialize_info_section(section_name, section)
+                for section_name, section in info.items()
+            )),
+        ) + b"\r\n")
 
     def _on_quit(self, arguments):
         if not arguments:
@@ -284,6 +274,8 @@ class _RequestHandler:
 
         try:
             reply = self._command_handler.handle(command, arguments)
+            if reply is None:
+                reply = rcluster.protocol.replies.NoneReply()
         except rcluster.protocol.exceptions.CommandError as ex:
             reply = rcluster.protocol.replies.ErrorReply(
                 data=ex.data,
