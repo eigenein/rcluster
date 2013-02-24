@@ -56,5 +56,5 @@ class TestShard(unittest.TestCase):
             for x in range(32)
         )
 
-    def _shutdown_redis(port_number):
+    def _shutdown_redis(self, port_number):
         redis.StrictRedis(port=port_number).shutdown()
