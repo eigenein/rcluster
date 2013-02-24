@@ -6,5 +6,9 @@ before_install:
   - "python setup.py check pep8 flakey"
 install:
   - "python setup.py install"
+before_script:
+  - "redis-server ./etc/redis-6380.conf"
 script:
   - "python setup.py test"
+after_script:
+  - "python ./tools/stop-redis --port 6380"
