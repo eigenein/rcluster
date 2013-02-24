@@ -7,7 +7,9 @@ Redis Cluster Shard.
 
 import argparse
 import logging
+import operator
 import os
+import time
 import traceback
 import uuid
 
@@ -33,7 +35,8 @@ class Shard(rcluster.protocol.Server):
 
         self._logger = logging.getLogger("rcluster.shard.Shard")
         self._replicaness = 1
-        self._shards = dict()
+        self._connections = dict()
+        self._db_size = dict()
 
     @property
     def replicaness(self):
@@ -54,7 +57,6 @@ class Shard(rcluster.protocol.Server):
             host=host,
             port=port_number,
             db=db,
-            decode_responses=True,
         )
         shard_id = uuid.uuid4().hex
         try:
@@ -66,20 +68,21 @@ class Shard(rcluster.protocol.Server):
                 "Could not connect to the specified shard.",
             ) from ex
         else:
-            is_new_shard = shard_id not in self._shards
+            self._connections[shard_id] = connection
+            self._db_size[shard_id] = db_size
             self._logger.info(
-                "Shard is OK. New: %s. DbSize: %s.",
-                is_new_shard,
+                "Shard %s is added (db_size: %s).",
+                shard_id,
                 db_size,
             )
-            self._shards[shard_id] = {
-                "connection": connection,
-                "db_size": db_size,
-            }
-            return is_new_shard
+            return shard_id
 
     def is_shard_alive(self, shard_id):
-        connection = self._shards.get(shard_id)["connection"]
+        """
+        Checks whether the connection to the specified shard is alive.
+        """
+
+        connection = self._connections.get(shard_id)
         if connection is None:
             return False
         try:
@@ -90,10 +93,101 @@ class Shard(rcluster.protocol.Server):
             return True
 
     def get(self, key):
-        pass
+        latest_timestamp, latest_data = 0, None
+
+        for shard_id, connection in self._connections.items():
+            try:
+                with connection.pipeline(transaction=True) as pipeline:
+                    data_key, timestamp_key = self._wrap_key(key)
+                    pipeline.get(data_key).get(timestamp_key).dbsize()
+                    data, timestamp, db_size = pipeline.execute()
+            except redis.exceptions.ConnectionError:
+                # Failed to get the value from this shard. It is failed -
+                # just ignore it.
+                pass
+            else:
+                # Timestamp might not be set for the first time.
+                timestamp = (timestamp and int(timestamp)) or 0
+                if not latest_timestamp or latest_timestamp < timestamp:
+                    latest_data, latest_timestamp = data, timestamp
+                # Update DBSIZE.
+                self._db_size[shard_id] = db_size
+
+        return latest_data
 
     def set(self, key, data):
-        pass
+        """
+        Sets the specified key.
+        """
+
+        # Wrap key name.
+        data_key, timestamp_key = self._wrap_key(key)
+        # Find available shards from the least busy.
+        shards = (
+            (shard_id, self._connections[shard_id], db_size)
+            # Sort by db_size increasing.
+            for shard_id, db_size in sorted(
+                self._db_size.items(),
+                key=operator.itemgetter(1),
+            )
+            # Check that the connection is still available.
+            if shard_id in self._connections
+        )
+
+        while True:
+            # Replicas counter - we need self._replicaness keys set
+            # with this timestamp.
+            timestamp, replicas_left = self._timestamp(), self._replicaness
+            try:
+                for shard_id, connection, db_size in shards:
+                    try:
+                        with connection.pipeline(transaction=True) as pipeline:
+                            pipeline.watch(data_key)
+                            pipeline.watch(timestamp_key)
+                            pipeline.multi()
+
+                            # Delete old data.
+                            pipeline.delete(data_key)
+                            pipeline.delete(timestamp_key)
+
+                            # Determine whether we also need to set the key.
+                            set_key = replicas_left != 0
+                            if set_key:
+                                pipeline.set(data_key, data)
+                                pipeline.set(timestamp_key, timestamp)
+
+                            # Anyway, update cached DBSIZE value.
+                            pipeline.dbsize()
+
+                            # DBSIZE is the last item.
+                            self._db_size[shard_id] = pipeline.execute()[-1]
+                    except redis.exceptions.ConnectionError as ex:
+                        self._logger.debug(str(ex))
+                        # Skip failed target.
+                    else:
+                        if set_key:
+                            # We set the replica.
+                            replicas_left -= 1
+            except redis.exceptions.WatchError:
+                # Other rcluster.shard has modified the key - retry.
+                continue
+            else:
+                # All transactions has succeeded.
+                break
+
+        # Success if the key is set at least once.
+        return replicas_left != self._replicaness
+
+    def _wrap_key(self, key):
+        rc_key = b"rc:" + bytes(key, "utf-8")
+        return rc_key, rc_key + b":ts"
+
+    def _timestamp(self):
+        """
+        Gets the current timestamp.
+        """
+
+        return int(time.time() * 1000000)
 
     def _create_handler(self):
         return _ShardCommandHandler(self)
@@ -116,11 +210,12 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         if section is None or section == b"Shards":
             status = b"".join(
                 b"." if self._shard.is_shard_alive(shard_id) else b"F"
-                for shard_id in self._shard._shards
+                for shard_id in self._shard._connections
             )
+            count = bytes(str(len(self._shard._connections)), "ascii")
             info.update({
                 b"Shards": {
-                    b"count": bytes(str(len(self._shard._shards)), "ascii"),
+                    b"count": count,
                     b"status": status,
                 },
             })
@@ -149,17 +244,14 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
                 )
             else:
                 try:
-                    is_new_shard = self._shard.add_shard(host, port_number, db)
+                    shard_id = self._shard.add_shard(host, port_number, db)
                 except rcluster.shard.exceptions.ShardConnectionError:
                     return rcluster.protocol.replies.ErrorReply(
                         data=b"ERR Could not connect to the shard.",
                     )
                 else:
                     return rcluster.protocol.replies.StatusReply(
-                        data=(
-                            b"OK Shard is added."
-                            if is_new_shard else b"OK Shard is updated."
-                        ),
+                        data=b"OK Shard " + shard_id + b" is added",
                     )
         else:
             raise rcluster.protocol.exceptions.CommandError(
@@ -184,10 +276,14 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         if len(arguments) == 2:
             key, data = str(arguments[0], "utf-8"), arguments[1]
             self._logger.debug("SET %s bytes(%s)" % (key, len(data)))
-            self._shard.set(key, data)
-            return rcluster.protocol.replies.StatusReply(
-                data=b"OK",
-            )
+            if self._shard.set(key, data):
+                return rcluster.protocol.replies.StatusReply(
+                    data=b"OK",
+                )
+            else:
+                return rcluster.protocol.replies.ErrorReply(
+                    data=b"ERR The key is not set - possible cluster failure.",
+                )
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> SET key data",
@@ -206,7 +302,8 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
                     self._shard.replicaness = replicaness
                     return rcluster.protocol.replies.StatusReply(
                         data=(
-                            b"OK" if replicaness <= len(self._shard._shards)
+                            b"OK"
+                            if replicaness <= len(self._shard._connections)
                             else b"OK Add more shards."
                         ),
                     )
