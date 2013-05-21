@@ -9,7 +9,7 @@ import itertools
 import logging
 import traceback
 
-import tornado.netutil
+import tornado.tcpserver
 
 import rcluster.protocol.exceptions
 import rcluster.protocol.replies
@@ -102,7 +102,7 @@ class CommandHandler:
             )
 
 
-class Server(tornado.netutil.TCPServer):
+class Server(tornado.tcpserver.TCPServer):
     """
     Redis Protocol server.
     """
