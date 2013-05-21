@@ -6,10 +6,10 @@ Redis Cluster Shard.
 """
 
 import argparse
+import datetime
 import logging
 import operator
 import os
-import time
 import traceback
 import uuid
 
@@ -26,6 +26,8 @@ import rcluster.shared
 
 class Shard(rcluster.protocol.Server):
     SHARD_ID_KEY = "rcluster:shard:id"
+
+    EPOCH = datetime.datetime(1970, 1, 1)
 
     def __init__(self, port_number):
         super(Shard, self).__init__(
@@ -143,7 +145,7 @@ class Shard(rcluster.protocol.Server):
         while True:
             # Replicas counter - we need self._replicaness keys set
             # with this timestamp.
-            timestamp, replicas_left = self._timestamp(), self._replicaness
+            timestamp, replicas_left = self.time(), self._replicaness
             try:
                 for shard_id, connection, db_size in shards:
                     try:
@@ -184,16 +186,17 @@ class Shard(rcluster.protocol.Server):
         # Success if the key is set at least once.
         return replicas_left != self._replicaness
 
+    def time(self):
+        """
+        Gets the current time.
+        """
+
+        delta = datetime.datetime.utcnow() - self.EPOCH
+        return delta.microseconds + (delta.seconds + delta.days * 24 * 3600) * 1000000
+
     def _wrap_key(self, key):
         rc_key = b"rc:" + bytes(key, "utf-8")
         return rc_key, rc_key + b":ts"
-
-    def _timestamp(self):
-        """
-        Gets the current timestamp.
-        """
-
-        return int(time.time() * 1000000)
 
     def _create_handler(self):
         return _ShardCommandHandler(self)
@@ -206,6 +209,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
             b"GET": self._on_get,
             b"SET": self._on_set,
             b"SETREPLICANESS": self._on_set_replicaness,
+            b"TIME": self._on_time,
         })
 
         self._logger = logging.getLogger("rcluster.shard._ShardCommandHandler")
@@ -320,6 +324,20 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> SETREPLICANESS replicaness",
+            )
+
+    def _on_time(self, arguments):
+        if len(arguments) == 0:
+            seconds, microseconds = divmod(self._shard.time(), 1000000)
+            return rcluster.protocol.replies.MultiBulkReply(
+                replies=(
+                    rcluster.protocol.replies.BulkReply(data=bytes(str(seconds), "ascii")),
+                    rcluster.protocol.replies.BulkReply(data=bytes(str(microseconds), "ascii")),
+                ),
+            )
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> TIME",
             )
 
 
