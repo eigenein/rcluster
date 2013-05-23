@@ -60,7 +60,7 @@ class Shard(rcluster.protocol.Server):
             port=port_number,
             db=db,
         )
-        shard_id = uuid.uuid4().hex
+        shard_id = bytes(uuid.uuid4().hex, "utf-8")
         try:
             if not connection.setnx(Shard.SHARD_ID_KEY, shard_id):
                 shard_id = connection.get(Shard.SHARD_ID_KEY)
@@ -161,7 +161,10 @@ class Shard(rcluster.protocol.Server):
                             # Determine whether we also need to set the key.
                             set_key = replicas_left != 0
                             if set_key:
-                                pipeline.set(data_key, data)
+                                if data is not None:
+                                    pipeline.set(data_key, data)
+                                else:
+                                    pipeline.delete(data_key)
                                 pipeline.set(timestamp_key, timestamp)
 
                             # Anyway, update cached DBSIZE value.
@@ -186,6 +189,9 @@ class Shard(rcluster.protocol.Server):
         # Success if the key is set at least once.
         return replicas_left != self._replicaness
 
+    def delete(self, key):
+        return self.set(key, None)
+
     def time(self):
         """
         Gets the current time.
@@ -206,6 +212,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
     def __init__(self, shard):
         super(_ShardCommandHandler, self).__init__({
             b"ADDSHARD": self._on_add_shard,
+            b"DEL": self._on_del,
             b"GET": self._on_get,
             b"SET": self._on_set,
             b"SETREPLICANESS": self._on_set_replicaness,
@@ -297,6 +304,20 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> SET key data",
+            )
+
+    def _on_del(self, arguments):
+        if len(arguments) != 0:
+            keys_removed = 0
+            for key in arguments:
+                key = str(key, "utf-8")
+                self._logger.debug("DEL %s" % key)
+                if self._shard.delete(key):
+                    keys_removed += 1
+            return rcluster.protocol.replies.IntegerReply(value=keys_removed)
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> DEL key [key ...]",
             )
 
     def _on_set_replicaness(self, arguments):
