@@ -37,6 +37,17 @@ class TestShard(unittest.TestCase):
 
         self.assertEqual(data, shard.get(key), "Data is not read.")
 
+    def test_set_del_key(self):
+        shard = rcluster.shard.Shard(0)
+        shard_id = shard.add_shard("localhost", 6380, 0)
+
+        key, data = self._key(), os.urandom(32)
+        shard.set(key, data)
+
+        shard.delete(key)
+
+        self.assertIsNone(shard.get(key), "Key should be deleted.")
+
     def test_fault_tolerance_2_shards_2_replicas_1_fault(self):
         shard = rcluster.shard.Shard(0)
         shard.replicaness = 2
@@ -48,17 +59,6 @@ class TestShard(unittest.TestCase):
         shard.remove_shard(shard2_id)
 
         self.assertEqual(data, shard.get(key), "Data is not read.")
-
-    def test_shutdown_redis(self):
-        shard = rcluster.shard.Shard(0)
-        shard.add_shard("localhost", 6380, 0)
-
-        key, data = self._key(), os.urandom(32)
-        shard.set(key, data)
-        self._shutdown_redis(6380)
-
-        # Check that this will not fail.
-        self.assertIsNone(shard.get(key), "Data must be unavailable.")
 
     def _key(self):
         return "".join(
