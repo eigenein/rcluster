@@ -197,7 +197,26 @@ class Shard(rcluster.protocol.Server):
         Gets the current time.
         """
 
-        delta = datetime.datetime.utcnow() - self.EPOCH
+        return self._to_timestamp(datetime.datetime.now())
+
+    def lastsave(self):
+        latest_timestamp = 0
+
+        for shard_id, connection in self._connections.items():
+            try:
+                timestamp = self._to_timestamp(connection.lastsave()) // 1000000
+            except redis.exceptions.ConnectionError:
+                # Failed to get the value from this shard. It is failed -
+                # just ignore it.
+                pass
+            else:
+                if not latest_timestamp or latest_timestamp < timestamp:
+                    latest_timestamp = timestamp
+
+        return latest_timestamp
+
+    def _to_timestamp(self, time):
+        delta = time - self.EPOCH
         return delta.microseconds + (delta.seconds + delta.days * 24 * 3600) * 1000000
 
     def _wrap_key(self, key):
@@ -215,6 +234,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
             b"CONFIG": self._on_config,
             b"DEL": self._on_del,
             b"GET": self._on_get,
+            b"LASTSAVE": self._on_lastsave,
             b"SET": self._on_set,
             b"SETREPLICANESS": self._on_set_replicaness,
             b"TIME": self._on_time,
@@ -404,6 +424,14 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> CONFIG SET key [value ...]",
+            )
+
+    def _on_lastsave(self, arguments):
+        if len(arguments) == 0:
+            return rcluster.protocol.replies.IntegerReply(value=self._shard.lastsave())
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> LASTSAVE",
             )
 
 
