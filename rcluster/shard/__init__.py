@@ -212,6 +212,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
     def __init__(self, shard):
         super(_ShardCommandHandler, self).__init__({
             b"ADDSHARD": self._on_add_shard,
+            b"CONFIG": self._on_config,
             b"DEL": self._on_del,
             b"GET": self._on_get,
             b"SET": self._on_set,
@@ -329,22 +330,31 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
                     data=b"ERR " + bytes(str(ex), "utf-8"),
                 )
             else:
-                if replicaness >= 1:
-                    self._shard.replicaness = replicaness
-                    return rcluster.protocol.replies.StatusReply(
-                        data=(
-                            b"OK"
-                            if replicaness <= len(self._shard._connections)
-                            else b"OK Add more shards."
-                        ),
-                    )
-                else:
-                    raise rcluster.protocol.exceptions.CommandError(
-                        data=b"ERR Invalid replicaness value.",
-                    )
+                return self._set_replicaness(replicaness)
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> SETREPLICANESS replicaness",
+            )
+
+    def _set_replicaness(self, replicaness):
+        """
+        Sets the replicaness. Returns the corresponding status.
+        """
+
+        self._logger.debug("_set_replicaness %s", replicaness)
+
+        if replicaness >= 1:
+            self._shard.replicaness = replicaness
+            return rcluster.protocol.replies.StatusReply(
+                data=(
+                    b"OK"
+                    if replicaness <= len(self._shard._connections)
+                    else b"OK Add more shards."
+                ),
+            )
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Invalid replicaness value.",
             )
 
     def _on_time(self, arguments):
@@ -359,6 +369,41 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
         else:
             raise rcluster.protocol.exceptions.CommandError(
                 data=b"ERR Expected> TIME",
+            )
+
+    def _on_config(self, arguments):
+        if len(arguments) != 0 and arguments[0].upper() == b"SET":
+            return self._on_config_set(arguments[1:])
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> CONFIG SET [key ...]",
+            )
+
+    def _on_config_set(self, arguments):
+        self._logger.debug("CONFIG SET %s", arguments)
+        if len(arguments) != 0:
+            parameter = arguments[0]
+            if parameter == b"replicaness":
+                if len(arguments) == 2:
+                    try:
+                        replicaness = int(arguments[1])
+                    except ValueError:
+                        raise rcluster.protocol.exceptions.CommandError(
+                            data=b"ERR " + bytes(str(ex), "utf-8"),
+                        )
+                    else:
+                        return self._set_replicaness(replicaness)
+                else:
+                    raise rcluster.protocol.exceptions.CommandError(
+                        data=b"ERR Expected> CONFIG SET replicaness value",
+                    )
+            else:
+                raise rcluster.protocol.exceptions.CommandError(
+                    data=b"ERR Unsupported CONFIG parameter: " + parameter,
+                )
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> CONFIG SET key [value ...]",
             )
 
 
