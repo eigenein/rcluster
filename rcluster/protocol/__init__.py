@@ -20,22 +20,29 @@ class CommandHandler:
     Base command handler.
     """
 
-    def __init__(self, handlers={}):
+    def __init__(self, password=None, handlers={}):
         self._logger = logging.getLogger("rcluster.protocol.CommandHandler")
+        self._password, self._authenticated = password, False
         self._handlers = {
-            b"PING": self._on_ping,
+            b"AUTH": self._on_auth,
             b"ECHO": self._on_echo,
-            b"QUIT": self._on_quit,
             b"INFO": self._on_info,
+            b"PING": self._on_ping,
+            b"QUIT": self._on_quit,
         }
         self._handlers.update(handlers)
 
     def handle(self, command, arguments):
         self._logger.debug("%s %s", command, repr(arguments))
 
-        handler = self._handlers.get(command.upper())
+        command = command.upper()
+        handler = self._handlers.get(command)
 
         if handler:
+            if command != b"AUTH" and self._password and not self._authenticated:
+                raise rcluster.protocol.exceptions.CommandError(
+                    data=b"ERR Not authenticated.",
+                )
             return handler(arguments)
         else:
             raise rcluster.protocol.exceptions.UnknownCommandError()
@@ -47,7 +54,7 @@ class CommandHandler:
 
         return {
             b"Server": {
-                b"commands": b",".join(self._handlers.keys()),
+                b"commands": b",".join(sorted(self._handlers.keys())),
             },
         } if section is None or section == b"Server" else dict()
 
@@ -60,6 +67,24 @@ class CommandHandler:
             (b"# " + section_name, ),
             (name + b":" + value for name, value in section.items()),
         )
+
+    def _on_auth(self, arguments):
+        if len(arguments) == 1:
+            if not self._password:
+                raise rcluster.protocol.exceptions.CommandError(
+                    data=b"ERR Client sent AUTH, but no password is set.",
+                )
+            password = arguments[0].decode("utf-8")
+            self._authenticated = (password == self._password)
+            if not self._authenticated:
+                raise rcluster.protocol.exceptions.CommandError(
+                    data=b"ERR Invalid password.",
+                )
+            return rcluster.protocol.replies.StatusReply(data=b"Authenticated.")
+        else:
+            raise rcluster.protocol.exceptions.CommandError(
+                data=b"ERR Expected> AUTH password",
+            )
 
     def _on_ping(self, arguments):
         if not arguments:

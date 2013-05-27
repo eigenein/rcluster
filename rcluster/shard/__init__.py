@@ -29,7 +29,7 @@ class Shard(rcluster.protocol.Server):
 
     EPOCH = datetime.datetime(1970, 1, 1)
 
-    def __init__(self, port_number):
+    def __init__(self, port_number, password=None):
         super(Shard, self).__init__(
             port_number=port_number,
             command_handler_factory=self._create_handler,
@@ -39,6 +39,7 @@ class Shard(rcluster.protocol.Server):
         self._replicaness = 1
         self._connections = dict()
         self._db_size = dict()
+        self._password = password
 
     @property
     def replicaness(self):
@@ -224,21 +225,23 @@ class Shard(rcluster.protocol.Server):
         return rc_key, rc_key + b":ts"
 
     def _create_handler(self):
-        return _ShardCommandHandler(self)
+        return _ShardCommandHandler(self, self._password)
 
 
 class _ShardCommandHandler(rcluster.protocol.CommandHandler):
-    def __init__(self, shard):
-        super(_ShardCommandHandler, self).__init__({
-            b"ADDSHARD": self._on_add_shard,
-            b"CONFIG": self._on_config,
-            b"DEL": self._on_del,
-            b"GET": self._on_get,
-            b"LASTSAVE": self._on_lastsave,
-            b"SET": self._on_set,
-            b"SETREPLICANESS": self._on_set_replicaness,
-            b"TIME": self._on_time,
-        })
+    def __init__(self, shard, password=None):
+        super(_ShardCommandHandler, self).__init__(
+            password, {
+                b"ADDSHARD": self._on_add_shard,
+                b"CONFIG": self._on_config,
+                b"DEL": self._on_del,
+                b"GET": self._on_get,
+                b"LASTSAVE": self._on_lastsave,
+                b"SET": self._on_set,
+                b"SETREPLICANESS": self._on_set_replicaness,
+                b"TIME": self._on_time,
+            },
+        )
 
         self._logger = logging.getLogger("rcluster.shard._ShardCommandHandler")
         self._shard = shard
@@ -443,20 +446,28 @@ def _create_argument_parser():
     )
     parser.add_argument(
         "--log-level",
-        dest="log_level",
-        type=str,
-        metavar="LEVEL",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "FATAL"],
         default="DEBUG",
+        dest="log_level",
         help="logging level (default: %(default)s)",
+        metavar="LEVEL",
+        type=str,
     )
     parser.add_argument(
         "--port",
-        dest="port_number",
-        type=int,
-        metavar="PORT",
         default=rcluster.shared.DEFAULT_SHARD_PORT,
+        dest="port_number",
         help="port number to listen to (default: %(default)s)",
+        metavar="PORT",
+        type=int,
+    )
+    parser.add_argument(
+        "--password",
+        default=None,
+        dest="password",
+        help="password",
+        metavar="PASSWORD",
+        type=str,
     )
     return parser
 
@@ -471,7 +482,7 @@ def entry_point():
     logger = logging.getLogger("rcluster.shard")
 
     logger.info("Starting the shard ...")
-    Shard(args.port_number).start()
+    Shard(args.port_number, args.password).start()
 
     logger.info("IO loop is being started.")
     logger.info(
