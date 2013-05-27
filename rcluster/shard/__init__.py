@@ -407,7 +407,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
                 if len(arguments) == 2:
                     try:
                         replicaness = int(arguments[1])
-                    except ValueError:
+                    except ValueError as ex:
                         raise rcluster.protocol.exceptions.CommandError(
                             data=b"ERR " + bytes(str(ex), "utf-8"),
                         )
