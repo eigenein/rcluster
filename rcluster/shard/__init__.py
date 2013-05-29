@@ -301,7 +301,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
 
     def _on_get(self, arguments):
         if len(arguments) == 1:
-            key = str(arguments[0], "utf-8")
+            key = arguments[0]
             self._logger.debug("GET %s" % key)
             data = self._shard.get(key)
             if data is not None:
