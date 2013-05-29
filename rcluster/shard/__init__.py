@@ -221,7 +221,7 @@ class Shard(rcluster.protocol.Server):
         return delta.microseconds + (delta.seconds + delta.days * 24 * 3600) * 1000000
 
     def _wrap_key(self, key):
-        rc_key = b"rc:" + bytes(key, "utf-8")
+        rc_key = b"rc:" + key
         return rc_key, rc_key + b":ts"
 
     def _create_handler(self):
@@ -315,7 +315,7 @@ class _ShardCommandHandler(rcluster.protocol.CommandHandler):
 
     def _on_set(self, arguments):
         if len(arguments) == 2:
-            key, data = str(arguments[0], "utf-8"), arguments[1]
+            key, data = arguments[0], arguments[1]
             self._logger.debug("SET %s bytes(%s)" % (key, len(data)))
             if self._shard.set(key, data):
                 return rcluster.protocol.replies.StatusReply(
